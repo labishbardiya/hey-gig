@@ -79,7 +79,14 @@ button:disabled, #connect:disabled, #export:disabled { background: var(--stage);
 }
 #capture-status, #export-status { color: var(--waiting); }
 .organize { margin-top: 28px; }
-.organize form { display: flex; flex-wrap: wrap; gap: 8px; }
+.organize form { display: grid; gap: 8px; min-width: 0; }
+.organize label { display: grid; gap: 4px; min-width: 0; }
+.organize input, .organize select { width: 100%; min-width: 0; }
+.organize form button { justify-self: start; }
+@media (min-width: 761px) and (max-width: 1000px) {
+  body.companion .workspace { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body.companion .scan-layout { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+}
 .organize select { font: inherit; padding: 8px; }
 body.companion #intro-copy { display: none; }
 body {
