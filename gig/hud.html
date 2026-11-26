@@ -251,9 +251,45 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     <ul id="calls"></ul>
   </section>
 </div>
+<div class="workspace">
+  <section data-screen="translation">
+    <h2>English ↔ Hindi</h2>
+    <p>Take turns speaking for up to five seconds. Each reply plays on the other device.</p>
+    <div class="controls">
+      <button id="translate-buds" disabled>Speak English on Buds</button>
+      <button id="translate-tablet" disabled>Speak Hindi on tablet</button>
+    </div>
+    <p id="translation-status" role="status"></p>
+    <dl id="translation-result" hidden>
+      <dt>Heard</dt><dd id="translation-original" dir="auto"></dd>
+      <dt>Translation</dt><dd id="translation-answer" dir="auto"></dd>
+    </dl>
+    <audio id="translation-audio" controls hidden></audio>
+  </section>
+</div>
+<div class="workspace">
+  <section data-screen="tools">
+    <h2>Ask about the camera</h2>
+    <form id="vision-form" class="call-form">
+      <label>Question <input id="vision-question" maxlength="500" required></label>
+      <button>Analyze live frame</button>
+    </form>
+    <p id="vision-result" role="status"></p>
+    <h2>Read a public source</h2>
+    <form id="research-form" class="call-form">
+      <label>Page URL <input id="research-url" type="url" maxlength="2000" required></label>
+      <label>What should I look for? <input id="research-question" maxlength="400"></label>
+      <button>Find excerpts</button>
+    </form>
+    <p id="research-result" class="call-task" role="status"></p>
+    <a id="research-source" hidden target="_blank" rel="noopener noreferrer"></a>
+  </section>
+</div>
 <nav class="app-nav" aria-label="Hey GIG screens" hidden>
   <button type="button" data-view="scanner">Scanner</button>
   <button type="button" data-view="assistant">Assistant</button>
+  <button type="button" data-view="translation">Translate</button>
+  <button type="button" data-view="tools">Tools</button>
   <button type="button" data-view="calls">Calls</button>
   <button type="button" data-view="activity">Activity</button>
   <button type="button" data-view="reminders">Reminders</button>
@@ -308,6 +344,7 @@ function discardDrafts() {
   byId('extraction').hidden = true;
   byId('assistant-transcript').textContent = '';
   byId('assistant-answer').textContent = '';
+  byId('vision-result').textContent = '';
   updateScanActions();
 }
 let workspaceRefresh;
@@ -725,6 +762,8 @@ async function refreshWorkspace() {
     privacyEpoch = state.privacy.epoch;
     privacyPaused = state.privacy.paused;
     if (changed || (privacyPaused && pages.size)) discardDrafts();
+    if (changed || privacyPaused) clearTranslation();
+    updateTranslationButtons();
     byId('privacy').disabled = false;
     byId('assistant-talk').disabled = privacyPaused || assistantBusy;
     byId('privacy').textContent = privacyPaused ? 'Resume camera and mic' : 'Pause camera and mic';
@@ -848,6 +887,144 @@ byId('assistant-form').onsubmit = event => {
   runAssistant('text', { command: byId('assistant-command').value });
 };
 byId('assistant-talk').onclick = () => runAssistant('voice', {});
+function toolForm(name, payload, render) {
+  const form = byId(name + '-form');
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const button = form.querySelector('button');
+    const result = byId(name + '-result');
+    const epoch = privacyEpoch;
+    button.disabled = true;
+    result.textContent = 'Working…';
+    try {
+      const data = await (await workspaceRequest('/tools/' + name, payload())).json();
+      if (name === 'vision' && (privacyPaused || privacyEpoch !== epoch)) return;
+      result.textContent = data.answer;
+      if (render) render(data);
+    } catch (error) {
+      result.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+toolForm('vision', () => ({ question: byId('vision-question').value }));
+toolForm('research', () => {
+  byId('research-source').hidden = true;
+  return { url: byId('research-url').value, question: byId('research-question').value };
+}, data => {
+  const source = data.sources[0];
+  const link = byId('research-source');
+  link.href = source.url;
+  link.textContent = source.title || source.url;
+  link.hidden = false;
+});
+
+let translating = false;
+let translationStream;
+let translationUrl;
+function updateTranslationButtons() {
+  byId('translate-buds').disabled = !privacyEpoch || privacyPaused || translating;
+  byId('translate-tablet').disabled = !privacyEpoch || privacyPaused || translating ||
+    !companion || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder;
+}
+function clearTranslation() {
+  translationStream?.getTracks().forEach(track => track.stop());
+  const audio = byId('translation-audio');
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.hidden = true;
+  if (translationUrl) URL.revokeObjectURL(translationUrl);
+  translationUrl = undefined;
+  byId('translation-result').hidden = true;
+  byId('translation-original').textContent = '';
+  byId('translation-answer').textContent = '';
+}
+
+async function recordTablet(epoch, headers) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  translationStream = stream;
+  let monitor;
+  let timer;
+  try {
+    if (privacyPaused || privacyEpoch !== epoch) throw new Error('Microphone paused.');
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    let stoppedForPrivacy = false;
+    const recorded = new Promise((resolve, reject) => {
+      recorder.ondataavailable = event => chunks.push(event.data);
+      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType }));
+      recorder.onerror = reject;
+    });
+    const stop = () => {
+      if (recorder.state !== 'inactive') recorder.stop();
+      stream.getTracks().forEach(track => track.stop());
+    };
+    const check = async () => {
+      try {
+        const response = await fetch('/privacy', { headers, cache: 'no-store',
+          signal: AbortSignal.timeout(1000) });
+        const state = await response.json();
+        if (response.ok && !state.paused && state.epoch === epoch) return;
+      } catch (_) { /* A lost backend connection ends microphone capture. */ }
+      stoppedForPrivacy = true;
+      stop();
+    };
+    await check();
+    if (stoppedForPrivacy) throw new Error('Microphone paused.');
+    recorder.start();
+    monitor = setInterval(check, 300);
+    timer = setTimeout(stop, 5000);
+    const clip = await recorded;
+    if (stoppedForPrivacy || privacyEpoch !== epoch) throw new Error('Microphone paused.');
+    return clip;
+  } finally {
+    clearInterval(monitor);
+    clearTimeout(timer);
+    stream.getTracks().forEach(track => track.stop());
+    translationStream = undefined;
+  }
+}
+
+async function runTranslation(source) {
+  if (translating || !privacyEpoch || privacyPaused) return;
+  translating = true;
+  updateTranslationButtons();
+  clearTranslation();
+  const epoch = privacyEpoch;
+  const status = byId('translation-status');
+  status.textContent = 'Speak now. Listening for five seconds…';
+  const headers = { Authorization: 'Bearer ' + byId('token').value.trim(),
+    'X-GIG-Privacy-Epoch': epoch };
+  try {
+    const body = source === 'tablet' ? await recordTablet(epoch, headers) : new Blob([]);
+    status.textContent = 'Translating on your Mac…';
+    const response = await fetch('/translation/' + source, { method: 'POST', headers, body });
+    if (!response.ok) throw new Error(await response.text());
+    const turn = await response.json();
+    if (privacyPaused || privacyEpoch !== epoch) throw new Error('Translation stopped by privacy control.');
+    byId('translation-original').textContent = turn.original;
+    byId('translation-answer').textContent = turn.translation;
+    byId('translation-result').hidden = false;
+    status.textContent = turn.audio_warning || 'Translation ready.';
+    if (turn.audio) {
+      const bytes = Uint8Array.from(atob(turn.audio), value => value.charCodeAt(0));
+      translationUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+      const audio = byId('translation-audio');
+      audio.src = translationUrl;
+      audio.hidden = false;
+      try { await audio.play(); }
+      catch (_) { status.textContent = 'Hindi reply ready. Tap Play to listen.'; }
+    }
+  } catch (error) {
+    status.textContent = error.message || 'Translation failed.';
+  } finally {
+    translating = false;
+    updateTranslationButtons();
+  }
+}
+byId('translate-buds').onclick = () => runTranslation('buds');
+byId('translate-tablet').onclick = () => runTranslation('tablet');
 byId('connect').onclick = connect;
 byId('stop').onclick = stop;
 byId('capture').onclick = () => addPage();

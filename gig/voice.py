@@ -100,28 +100,38 @@ class PiVoice:
     def listen(self, epoch):
         if not self.model.is_file():
             raise ValueError('The local Whisper model is missing on the Mac.')
-        audio = self.remote('record', epoch)
-        with tempfile.TemporaryDirectory() as directory:
-            wav = Path(directory) / 'voice.wav'
-            wav.write_bytes(audio)
-            with wave.open(io.BytesIO(audio)) as clip:
-                if clip.getnframes() < 1000:
-                    raise ValueError('The microphone returned too little audio.')
-            output = wav.with_suffix('.txt')
-            subprocess.run(['whisper-cli', '-m', str(self.model), '-f', str(wav),
-                            '-l', 'en', '-otxt', '-of', str(output.with_suffix(''))],
-                           check=True, capture_output=True, timeout=45)
-            return output.read_text().strip()
+        return transcribe(self.remote('record', epoch), self.model, 'en')
 
     def speak(self, text, epoch):
-        if sys.platform != 'darwin':
-            raise ValueError('Spoken replies currently require the Mac backend.')
-        with tempfile.TemporaryDirectory() as directory:
-            wav = Path(directory) / 'reply.wav'
-            subprocess.run(['say', '-o', str(wav), '--file-format=WAVE',
-                            '--data-format=LEI16@16000', '--', text[:450]],
-                           check=True, capture_output=True, timeout=15)
-            self.remote('play', epoch, wav.read_bytes())
+        self.remote('play', epoch, synthesize(text))
+
+
+def transcribe(audio, model, language):
+    if not model.is_file():
+        raise ValueError('The local Whisper model is missing on the Mac.')
+    with tempfile.TemporaryDirectory() as directory:
+        wav = Path(directory) / 'voice.wav'
+        wav.write_bytes(audio)
+        with wave.open(io.BytesIO(audio)) as clip:
+            if clip.getnframes() < 1000:
+                raise ValueError('The microphone returned too little audio.')
+        output = wav.with_suffix('.txt')
+        subprocess.run(['whisper-cli', '-m', str(model), '-f', str(wav),
+                        '-l', language, '-otxt', '-of', str(output.with_suffix(''))],
+                       check=True, capture_output=True, timeout=45)
+        return output.read_text().strip()
+
+
+def synthesize(text, voice=None):
+    if sys.platform != 'darwin':
+        raise ValueError('Spoken replies currently require the Mac backend.')
+    with tempfile.TemporaryDirectory() as directory:
+        wav = Path(directory) / 'reply.wav'
+        command = ['say', '-o', str(wav), '--file-format=WAVE', '--data-format=LEI16@16000']
+        if voice:
+            command += ['-v', voice]
+        subprocess.run([*command, '--', text[:450]], check=True, capture_output=True, timeout=15)
+        return wav.read_bytes()
 
 
 def answer_document(pdf, question):

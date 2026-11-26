@@ -15,6 +15,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from gig.calls import Calls
 from gig.library import Library
 from gig.voice import dispatch
+from gig.translation import translate_turn
+from gig.vision import VisionUnavailable, answer_frame
+from gig.research import read_public_source
 from gig.scan import extract_lines, inspect_page, read_qr
 from gig.ocr import MAX_PAGES, searchable_pdf
 
@@ -65,6 +68,7 @@ def make_server(host, port, token, library_path=None, voice=None):
     frames = Frames(library)
     ocr_slot = threading.Lock()
     voice_slot = threading.Lock()
+    tools_slot = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def reply(self, code, body=b'', kind='text/plain', attachment=None):
@@ -269,9 +273,78 @@ def make_server(host, port, token, library_path=None, voice=None):
             finally:
                 voice_slot.release()
 
+        def translation_reply(self):
+            privacy = frames.privacy()
+            if privacy['paused'] or self.headers.get('X-GIG-Privacy-Epoch') != privacy['epoch']:
+                return self.reply(423, b'Translation stopped by privacy control.')
+            if voice is None:
+                return self.reply(503, b'Start the Pi preview with an SSH key to translate through the Buds.')
+            if not voice_slot.acquire(blocking=False):
+                return self.reply(409, b'Another audio turn is running.')
+            try:
+                audio = None
+                if self.path == '/translation/tablet':
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if not 1 <= length <= 2 * 1024 * 1024:
+                        return self.reply(413, b'Record a shorter turn.')
+                    self.connection.settimeout(8)
+                    audio = self.rfile.read(length)
+                    if len(audio) != length:
+                        return self.reply(400, b'The audio upload was incomplete.')
+                if frames.privacy() != privacy:
+                    return self.reply(423, b'Translation stopped by privacy control.')
+                result = translate_turn(voice, privacy['epoch'], audio,
+                                        lambda: frames.privacy() == privacy)
+                return self.json_reply(result)
+            except PermissionError as error:
+                return self.reply(423, str(error).encode())
+            except (ValueError, EOFError) as error:
+                return self.reply(422, str(error).encode())
+            except (OSError, subprocess.SubprocessError, KeyError, IndexError):
+                return self.reply(503, b'Local translation unavailable. Check the model and audio connection.')
+            finally:
+                voice_slot.release()
+
+        def tools_reply(self):
+            if not tools_slot.acquire(blocking=False):
+                return self.reply(409, b'Another tools request is running.')
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 1 <= length <= 4096:
+                    return self.reply(413, b'Question exceeds the size limit.')
+                self.connection.settimeout(5)
+                data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict):
+                    raise ValueError('Expected a question object.')
+                if self.path == '/tools/research':
+                    result = read_public_source(data.get('url'), data.get('question', ''))
+                    return self.json_reply(result)
+                privacy = frames.privacy()
+                if privacy['paused']:
+                    return self.reply(423, b'Camera is paused.')
+                frame = frames.get('reading')
+                if not frame:
+                    return self.reply(404, b'Waiting for a live USB camera frame.')
+                answer = answer_frame(frame, data.get('question'))
+                if frames.privacy() != privacy:
+                    return self.reply(423, b'Frame analysis discarded after privacy changed.')
+                return self.json_reply({'answer': answer})
+            except ValueError as error:
+                return self.reply(422, str(error).encode())
+            except VisionUnavailable as error:
+                return self.reply(503, str(error).encode())
+            except TimeoutError:
+                return self.reply(408, b'Request timed out.')
+            finally:
+                tools_slot.release()
+
         def do_POST(self):
             if not self.authorized():
                 return self.reply(401)
+            if self.path in ('/tools/research', '/tools/vision'):
+                return self.tools_reply()
+            if self.path in ('/translation/buds', '/translation/tablet'):
+                return self.translation_reply()
             if library and self.path == '/assistant/voice':
                 return self.voice_reply()
             if library and self.path in (

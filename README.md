@@ -223,3 +223,30 @@ the draft before the separate approval step.
 
 To revise a scheduled reminder, choose **Edit** in Reminders, update the
 text or due date, and select **Save changes**.
+
+## Local translation and tools
+
+**Translate** alternates five-second turns. On the USB-connected tablet,
+**Speak English on Buds** captures the Pi headset and plays the Hindi reply
+on the tablet. **Speak Hindi on tablet** captures the tablet mic and sends
+the English reply to the Buds. Both transcripts appear on screen. The
+Android companion requests microphone permission at first use. Capture
+stops when the privacy switch changes or the backend becomes unreachable.
+
+The Mac needs whisper.cpp, FFmpeg and macOS speech synthesis with **Lekha**
+available. The English ASR model is the existing `ggml-base.en.bin`.
+Place `ggml-small-q5_1.bin` in the same models folder for Hindi input,
+or set `GIG_MULTILINGUAL_MODEL` to a compatible local model. Start the
+Qwen3 1.7B GGUF translation service on the Mac:
+
+```sh
+llama-server -m ~/.local/share/hey-gig/models/Qwen3-1.7B-Q8_0.gguf \
+  --host 127.0.0.1 --port 18767 -c 2048 -ngl 99 --jinja --reasoning off \
+  --cors-origins localhost --no-cors-credentials
+```
+
+**Tools** supports visual questions about one live USB frame when a local
+vision-capable llama.cpp server listens at port 18768. The tested setup
+uses SmolVLM2‑500M Q8 and its matching multimodal projector. **Read a public
+source** uses the installed God Scrape runtime and returns matching
+excerpts from the supplied public HTML URL, with the source attached.
