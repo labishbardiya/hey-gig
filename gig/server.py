@@ -198,7 +198,7 @@ def make_server(host, port, token, library_path=None, voice=None):
                 elif self.path == '/approvals/decision':
                     library.decide(data.get('id'), data.get('decision'))
                 elif self.path == '/reminders':
-                    library.add_reminder(data.get('title'), data.get('due'))
+                    library.add_reminder(data.get('title'), data.get('due'), data.get('id'))
                 elif self.path == '/reminders/cancel':
                     library.cancel_reminder(data.get('id'))
                 elif self.path == '/routines':

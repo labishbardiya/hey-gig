@@ -2,11 +2,13 @@
 import json
 import os
 import re
+import stat
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS calls (
@@ -61,10 +63,26 @@ class CallProvider:
         return self.request('/v2/calls/' + urllib.parse.quote(identifier, safe='') + '/cancel', {})
 
 
+def local_api_key():
+    key = os.environ.get('CALLE_API_KEY', '').strip()
+    if key:
+        return key
+    path = Path.home() / '.local/share/hey-gig/calle-api-key'
+    try:
+        mode = path.stat().st_mode
+        if not stat.S_ISREG(mode) or mode & 0o077:
+            return None
+        with path.open() as file:
+            key = file.read(4097).strip()
+        return key if 0 < len(key) <= 4096 and not any(c.isspace() for c in key) else None
+    except (OSError, UnicodeError):
+        return None
+
+
 class Calls:
     def __init__(self, library, provider=None):
         self.library = library
-        key = os.environ.get('CALLE_API_KEY')
+        key = local_api_key()
         self.provider = provider or (CallProvider(key) if key else None)
         with library.connect() as db:
             db.executescript(SCHEMA)

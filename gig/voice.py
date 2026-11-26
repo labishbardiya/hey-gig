@@ -148,6 +148,10 @@ def dispatch(library, command, *, now=None):
     if not command:
         raise ValueError('No speech detected. Try again.')
     lower = command.casefold()
+    call = re.fullmatch(r'(?:draft a call to|call) (.+?) (?:to|and) (.+)', command, re.I)
+    if call:
+        return {'answer': 'Review the recipient and instructions in Calls, then save the draft.',
+                'call_draft': {'recipient': call[1][:200], 'task': call[2][:1500]}}
     if lower.startswith('remind me to '):
         title, due = reminder_request(command, now or datetime.now().astimezone())
         if due is None:

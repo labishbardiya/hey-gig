@@ -211,3 +211,15 @@ clears its unsaved scan pages when it sees the privacy change. The paused
 state persists across Mac backend restarts. Saved library documents and call
 history remain available. Voice and camera resume after the user selects
 **Resume camera and mic**. The control operates Hey GIG's capture processes.
+
+To enable live CALL-E on the Mac without putting the key in the launch command,
+save it in `~/.local/share/hey-gig/calle-api-key` with owner-only permissions
+(`chmod 600`). The backend reads it at startup. An explicit environment key
+takes precedence. After restart, the presence of **Live CALL-E** confirms that
+the backend loaded a key. Provider authentication is confirmed separately.
+A typed or spoken instruction such as “Draft a call to Campus Lab to ask
+about opening hours” prefills the Calls form. Choose the call mode and review
+the draft before the separate approval step.
+
+To revise a scheduled reminder, choose **Edit** in Reminders, update the
+text or due date, and select **Save changes**.

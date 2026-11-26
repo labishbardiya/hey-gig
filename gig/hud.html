@@ -197,7 +197,8 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     <form id="reminder-form">
       <label>Reminder <input id="reminder-title" required maxlength="200"></label>
       <label>Due <input id="reminder-due" type="datetime-local" required></label>
-      <button>Schedule</button>
+      <button id="save-reminder">Schedule</button>
+      <button id="cancel-edit" hidden type="button">Cancel edit</button>
     </form>
     </details>
     <ul id="reminders"></ul>
@@ -576,7 +577,28 @@ function formAction(id, path, payload) {
   };
 }
 
+let editingReminder = null;
+const reminderForm = byId('reminder-form');
+reminderForm.addEventListener('reset', () => {
+  editingReminder = null;
+  byId('save-reminder').textContent = 'Schedule';
+  byId('cancel-edit').hidden = true;
+});
+byId('cancel-edit').onclick = () => reminderForm.reset();
+function editReminder(reminder) {
+  reminderForm.reset();
+  editingReminder = reminder.id;
+  byId('reminder-title').value = reminder.title;
+  const due = new Date(reminder.due);
+  due.setMinutes(due.getMinutes() - due.getTimezoneOffset());
+  byId('reminder-due').value = due.toISOString().slice(0, 16);
+  byId('save-reminder').textContent = 'Save changes';
+  byId('cancel-edit').hidden = false;
+  reminderForm.closest('details').open = true;
+  byId('reminder-title').focus();
+}
 formAction('reminder-form', '/reminders', () => ({
+  id: editingReminder,
   title: byId('reminder-title').value,
   due: new Date(byId('reminder-due').value).toISOString()
 }));
@@ -704,7 +726,7 @@ async function refreshWorkspace() {
     renderList('reminders', state.reminders, (row, reminder) => {
       row.textContent = `${reminder.title} · ${new Date(reminder.due).toLocaleString()}`;
       if (reminder.state === 'due') row.append(' · Due');
-      else row.append(action('Cancel', async () => {
+      else row.append(action('Edit', () => editReminder(reminder)), action('Cancel', async () => {
         await workspaceRequest('/reminders/cancel', { id: reminder.id });
         await refreshWorkspace();
       }));
@@ -790,11 +812,20 @@ async function runAssistant(mode, data) {
     if (result.reminder) {
       followup.hidden = false;
       followup.onclick = () => {
+        reminderForm.reset();
         byId('reminder-title').value = result.reminder;
         byId('reminder-form').closest('details').open = true;
         showScreen('reminders');
         byId('reminder-due').focus();
       };
+    }
+    if (result.call_draft) {
+      byId('call-form').reset();
+      byId('call-recipient').value = result.call_draft.recipient;
+      byId('call-task').value = result.call_draft.task;
+      updateCallMode();
+      showScreen('calls');
+      byId('call-task').focus();
     }
     if (result.action === 'scan') showScreen('scanner');
     await refreshWorkspace();

@@ -97,7 +97,7 @@ class Library:
                 raise ValueError('This request is no longer pending.')
             self.event(db, f'Share request {approval_id} {decision}')
 
-    def add_reminder(self, title, due):
+    def add_reminder(self, title, due, identifier=None):
         title = self.label(title)
         if not isinstance(due, str):
             raise ValueError('Choose a date and time.')
@@ -105,9 +105,18 @@ class Library:
         if timestamp.utcoffset() is None or timestamp <= datetime.now(timezone.utc):
             raise ValueError('Choose a future date and time with a timezone.')
         with self.connect() as db:
-            db.execute('INSERT INTO reminders (title, due) VALUES (?, ?)',
-                       (title, timestamp.astimezone(timezone.utc).isoformat()))
-            self.event(db, f'Reminder scheduled: {title}')
+            normalized = timestamp.astimezone(timezone.utc).isoformat()
+            if identifier is None:
+                db.execute('INSERT INTO reminders (title, due) VALUES (?, ?)', (title, normalized))
+                self.event(db, f'Reminder scheduled: {title}')
+            else:
+                if type(identifier) is not int or not 1 <= identifier < 2**63:
+                    raise ValueError('Invalid reminder ID.')
+                updated = db.execute("UPDATE reminders SET title=?, due=? WHERE id=? AND state='scheduled'",
+                                     (title, normalized, identifier)).rowcount
+                if not updated:
+                    raise ValueError('Only scheduled reminders can be edited.')
+                self.event(db, f'Reminder updated: {title}')
 
     def cancel_reminder(self, identifier):
         with self.connect() as db:
