@@ -96,3 +96,15 @@ block of English text. Searchability and recognition accuracy depend on the scan
 ```sh
 python3 -m unittest discover -s tests -v
 ```
+
+## Local library and share approvals
+
+PDF exports also enter the Library. Download a copy there or select **Draft
+share**, enter the intended recipient, then select **Approve** or **Deny** in
+Approvals. Activity records the export and each decision. Approved drafts are
+shown as delivery pending. Delivery requires a separately configured provider.
+
+The Mac stores PDFs, recipients, and activity in
+`~/.local/share/hey-gig/library.sqlite3`. Set `GIG_LIBRARY` to a different
+SQLite file to keep demo data separate. Use a dedicated file for scans you want
+to keep separate from your regular library.

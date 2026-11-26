@@ -19,11 +19,16 @@ button:disabled { opacity: .45; cursor: default; }
 .lens img:not([src]) { visibility: hidden; }
 figcaption { position: absolute; bottom: 0; width: 100%; padding: 14px 20px; background: #091019db; display: flex; justify-content: space-between; }
 #pages { display: flex; flex-wrap: wrap; padding: 0; gap: 18px; list-style: none; }
+.workspace { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 16px; margin-top: 24px; }
+.workspace section { border: 1px solid #345463; border-radius: 14px; padding: 0 16px 14px; }
+.workspace ul { padding-left: 20px; overflow-wrap: anywhere; }
+.workspace li { margin-bottom: 12px; }
+.workspace li button { margin: 4px; }
 #pages img { display: block; width: 160px; margin-bottom: 6px; }
 @media print {
   body { background: white; color: black; }
   main { margin: 0; width: 100%; }
-  header, .views, .controls, #status, h2, button { display: none !important; }
+  header, .views, .controls, .workspace, #workspace-status, #status, h2, button { display: none !important; }
   #pages { display: block; margin: 0; }
   #pages li { break-after: page; }
   #pages li:last-child { break-after: auto; }
@@ -49,6 +54,12 @@ figcaption { position: absolute; bottom: 0; width: 100%; padding: 14px 20px; bac
 </div>
 <p id="export-status" role="status"></p>
 <ol id="pages" aria-label="Captured document pages"></ol>
+<p id="workspace-status" role="status"></p>
+<div class="workspace">
+  <section><h2>Library</h2><ul id="library"></ul></section>
+  <section><h2>Approvals</h2><ul id="approvals"></ul></section>
+  <section><h2>Activity</h2><ul id="activity"></ul></section>
+</div>
 </main>
 <script>
 const byId = id => document.getElementById(id);
@@ -100,6 +111,7 @@ async function connect() {
   byId('connect').disabled = byId('token').disabled = true;
   byId('stop').disabled = false;
   byId('status').textContent = 'Preview open';
+  refreshWorkspace();
   while (!signal.aborted) {
     await Promise.all(cameras.map(camera => update(camera, signal, headers)));
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -163,20 +175,105 @@ async function exportPdf() {
     if (!response.ok) {
       throw new Error(response.status === 401 ? 'Enter the access token for this session.' : await response.text());
     }
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'hey-gig-searchable.pdf';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    downloadPdf(await response.blob(), 'hey-gig-searchable.pdf');
     status.textContent = 'Searchable PDF ready. Check your browser downloads.';
+    refreshWorkspace();
   } catch (error) {
     status.textContent = error.message || 'PDF export failed.';
   } finally {
     exporting = false;
     updateScanActions();
+  }
+}
+
+function downloadPdf(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+async function workspaceRequest(path, data) {
+  const headers = { Authorization: 'Bearer ' + byId('token').value.trim() };
+  const options = { headers, cache: 'no-store' };
+  if (data) {
+    headers['Content-Type'] = 'application/json';
+    options.method = 'POST';
+    options.body = JSON.stringify(data);
+  }
+  const response = await fetch(path, options);
+  if (!response.ok) throw new Error((await response.text()) || 'Workspace request failed.');
+  return response;
+}
+
+function action(label, run) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.onclick = async () => {
+    button.disabled = true;
+    byId('workspace-status').textContent = '';
+    try { await run(); }
+    catch (error) { byId('workspace-status').textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  return button;
+}
+
+function renderList(id, entries, render, empty) {
+  const list = byId(id);
+  list.replaceChildren();
+  for (const entry of entries) {
+    const row = document.createElement('li');
+    render(row, entry);
+    list.append(row);
+  }
+  if (!entries.length) {
+    const row = document.createElement('li');
+    row.textContent = empty;
+    list.append(row);
+  }
+}
+
+async function refreshWorkspace() {
+  try {
+    const response = await workspaceRequest('/workspace');
+    const state = await response.json();
+    renderList('library', state.documents, (row, doc) => {
+      row.textContent = `Scan ${doc.id} · ${doc.pages} page${doc.pages === 1 ? '' : 's'}`;
+      row.append(action('Download', async () => {
+        const pdf = await workspaceRequest('/library/' + doc.id);
+        downloadPdf(await pdf.blob(), `hey-gig-${doc.id}.pdf`);
+      }), action('Draft share', async () => {
+        const recipient = window.prompt('Recipient for this share draft');
+        if (!recipient?.trim()) return;
+        await workspaceRequest('/approvals', { document: doc.id, recipient });
+        await refreshWorkspace();
+      }));
+    }, 'Export a scan to add it to the library.');
+
+    renderList('approvals', state.approvals, (row, approval) => {
+      const states = { pending: 'Awaiting approval', approved: 'Approved · delivery pending', denied: 'Denied' };
+      row.textContent = `Scan ${approval.document_id} → ${approval.recipient} · ${states[approval.state]}`;
+      if (approval.state === 'pending') {
+        for (const [label, decision] of [['Approve', 'approved'], ['Deny', 'denied']]) {
+          row.append(action(label, async () => {
+            await workspaceRequest('/approvals/decision', { id: approval.id, decision });
+            await refreshWorkspace();
+          }));
+        }
+      }
+    }, 'No share drafts yet.');
+
+    renderList('activity', state.activity, (row, entry) => {
+      row.textContent = `${entry.created} UTC · ${entry.message}`;
+    }, 'No activity yet.');
+    byId('workspace-status').textContent = '';
+  } catch (error) {
+    byId('workspace-status').textContent = error.message;
   }
 }
 

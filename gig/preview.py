@@ -9,7 +9,7 @@ import sys
 import threading
 from pathlib import Path
 
-from gig.server import make_server
+from gig.server import library_path, make_server
 
 
 # Executed with the Pi's system Python so apt-installed camera libraries are visible.
@@ -59,7 +59,7 @@ def main():
         parser.error('The remote port must be between 1 and 65535')
 
     token = secrets.token_urlsafe(32)
-    viewer = make_server('127.0.0.1', 0, token)
+    viewer = make_server('127.0.0.1', 0, token, library_path())
     worker = threading.Thread(target=viewer.serve_forever, daemon=True)
     worker.start()
     destination = f'http://127.0.0.1:{args.remote_port}'

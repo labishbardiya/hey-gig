@@ -1,6 +1,9 @@
 """Token-protected, memory-only latest-frame receiver and browser viewer."""
 import argparse
 import hmac
+import json
+import re
+import sqlite3
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +11,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from gig.library import Library
 from gig.ocr import MAX_PAGES, searchable_pdf
 
 MAX_FRAME = 2 * 1024 * 1024
@@ -31,7 +35,8 @@ class Frames:
 PAGE = Path(__file__).with_name('hud.html').read_bytes()
 
 
-def make_server(host, port, token):
+def make_server(host, port, token, library_path=None):
+    library = Library(library_path) if library_path else None
     frames = Frames()
     ocr_slot = threading.Lock()
 
@@ -54,6 +59,15 @@ def make_server(host, port, token):
                 return self.reply(200, PAGE, 'text/html; charset=utf-8')
             if not self.authorized():
                 return self.reply(401)
+            if library and self.path == '/workspace':
+                return self.reply(200, json.dumps(library.snapshot()).encode(), 'application/json')
+            match = re.fullmatch(r'/library/([0-9]{1,18})', self.path)
+            if library and match:
+                document_id = int(match[1])
+                pdf = library.document(document_id)
+                if pdf is None:
+                    return self.reply(404)
+                return self.reply(200, pdf, 'application/pdf', f'hey-gig-{document_id}.pdf')
             if self.path not in ('/frame/scene', '/frame/reading'):
                 return self.reply(404)
             jpeg = frames.get(self.path.rsplit('/', 1)[1])
@@ -91,15 +105,43 @@ def make_server(host, port, token):
                     return self.reply(503, b'Install Tesseract and qpdf on the computer running Hey GIG.')
                 except (subprocess.SubprocessError, OSError):
                     return self.reply(422, b'OCR could not finish. Try fewer pages or recapture the document.')
+                if library:
+                    try:
+                        library.add_document(pdf, len(pages))
+                    except sqlite3.Error:
+                        return self.reply(503, b'Could not save the PDF to the library.')
                 return self.reply(200, pdf, 'application/pdf', 'hey-gig-searchable.pdf')
             except TimeoutError:
                 return self.reply(408, b'Upload timed out.')
             finally:
                 ocr_slot.release()
 
+        def update_workspace(self):
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 1 <= length <= 4096:
+                    return self.reply(413)
+                self.connection.settimeout(5)
+                data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict):
+                    raise ValueError('Expected an action object.')
+                if self.path == '/approvals':
+                    library.request_share(data.get('document'), data.get('recipient'))
+                else:
+                    library.decide(data.get('id'), data.get('decision'))
+            except (ValueError, UnicodeError) as exc:
+                return self.reply(400, str(exc).encode())
+            except TimeoutError:
+                return self.reply(408)
+            except sqlite3.Error:
+                return self.reply(503, b'Library is unavailable. Try again.')
+            return self.reply(204)
+
         def do_POST(self):
             if not self.authorized():
                 return self.reply(401)
+            if library and self.path in ('/approvals', '/approvals/decision'):
+                return self.update_workspace()
             if self.path == '/scan/pdf':
                 return self.export_pdf()
             if self.path not in ('/frame/scene', '/frame/reading'):
@@ -123,6 +165,10 @@ def make_server(host, port, token):
     return ThreadingHTTPServer((host, port), Handler)
 
 
+def library_path():
+    return os.environ.get('GIG_LIBRARY') or Path.home() / '.local/share/hey-gig/library.sqlite3'
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--host', default='127.0.0.1')
@@ -131,7 +177,7 @@ def main():
     token = os.environ.get('GIG_TOKEN', '')
     if len(token) < 24:
         parser.error('Set GIG_TOKEN to a random token of at least 24 characters')
-    server = make_server(args.host, args.port, token)
+    server = make_server(args.host, args.port, token, library_path())
     print(f'GIG viewer: http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()
