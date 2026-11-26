@@ -48,3 +48,19 @@ Sources: [PaddleOCR technical report](https://arxiv.org/abs/2507.05595),
    video guidance, food estimates, public research using god-scrape, watch
    readings and opt-in event highlights. Verify each with its own fixtures.
    Move model workers to the RTX PC and compare the same test set.
+
+## Mac OCR comparison on one USB scan
+
+Both engines received the same crop from the previously saved USB-camera
+parts-list PDF. Timings are per image on the Mac CPU and exclude model setup
+and downloads. This is a single qualitative comparison.
+
+| Engine | Time | Observations |
+| --- | --- | --- |
+| Tesseract 5.5.4, English, PSM 6 | 0.28 s | Retained some camera-model lines omitted by PaddleOCR. Misread some small text and identifiers, including the Arducam kit number. |
+| PaddleOCR 3.7.0, PP-OCRv5 mobile detection + English mobile recognition | 2.45 s, 2.42 s | Read Raspberry Pi 5 Model B, StarTech HDMM2M and PJRC Teensy 4.0 more clearly. Omitted some lines and still misread parts of the Arducam identifier. |
+
+Keep Tesseract as the current export and word-geometry engine. Use multiple
+camera captures with verified transcripts, including Hindi and dense tables,
+before choosing a second engine. PP-StructureV3 and PaddleOCR-VL were not
+benchmarked in this run.

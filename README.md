@@ -108,3 +108,25 @@ The Mac stores PDFs, recipients, and activity in
 `~/.local/share/hey-gig/library.sqlite3`. Set `GIG_LIBRARY` to a different
 SQLite file to keep demo data separate. Use a dedicated file for scans you want
 to keep separate from your regular library.
+
+## Automatic capture and structured text
+
+On the Mac, create a scan environment with Python 3.12 and OpenCV:
+
+```sh
+uv venv --python 3.12 .venv-scan
+uv pip install --python .venv-scan/bin/python -r requirements-scan.txt
+.venv-scan/bin/python -m gig.preview gig@172.16.54.205 --camera usb --device /dev/video0
+```
+
+Enable **Auto-capture**, frame all four corners of a printed sheet against a
+contrasting background, and hold it steady. The HUD checks sharpness and
+corner movement, straightens the page, and suppresses visually similar
+captures. If two pages look alike or the corners are difficult to detect,
+use **Add page**. Remove a captured page to allow it to be captured again.
+
+**Extract text** displays recognized English lines in page order. **Save
+extraction JSON** downloads the lines and words, each word's confidence and
+bounding box in page-image pixels. **Save searchable PDF** still exports the
+reviewed page order. See [extraction trade-offs and Mac results](ARCHITECTURE.md)
+for the comparison with PaddleOCR.

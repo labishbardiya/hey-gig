@@ -86,10 +86,18 @@ button:disabled, #connect:disabled, #export:disabled { background: var(--stage);
 <h2 id="review-title">Pages <span id="page-count">0</span></h2>
 <div class="controls">
   <button id="capture" disabled>Add page</button>
+  <label><input id="auto-capture" type="checkbox"> Auto-capture</label>
+  <button id="extract" disabled>Extract text</button>
   <button id="export" disabled>Save searchable PDF</button>
 </div>
+<p id="capture-status" role="status"></p>
 <p id="export-status" role="status"></p>
 <ol id="pages" aria-label="Captured document pages"></ol>
+<details id="extraction" hidden>
+  <summary>Recognized text</summary>
+  <button id="save-extraction">Save extraction JSON</button>
+  <div id="extraction-pages"></div>
+</details>
 </section>
 </div>
 <p id="workspace-status" role="status"></p>
@@ -107,13 +115,24 @@ const pages = new Map();
 const pageLimit = 20;
 let session;
 let exporting = false;
+let extracting = false;
+let extractedPages = [];
+let lastInspection = 0;
+let stableCount = 0;
+let previousCorners;
+const capturedSignatures = [];
+
 function clear(camera, message) {
   if (live.has(camera)) URL.revokeObjectURL(live.get(camera).url);
   live.delete(camera);
   byId(camera).removeAttribute('src');
   byId(camera).closest('.lens').classList.remove('has-frame');
   byId(camera + '-state').textContent = message;
-  if (camera === 'reading') byId('capture').disabled = true;
+  if (camera === 'reading') {
+    stableCount = 0;
+    previousCorners = undefined;
+    updateScanActions();
+  }
 }
 
 async function update(camera, signal, headers) {
@@ -131,7 +150,10 @@ async function update(camera, signal, headers) {
     byId(camera).src = url;
     byId(camera).closest('.lens').classList.add('has-frame');
     byId(camera + '-state').textContent = 'Live';
-    if (camera === 'reading') updateScanActions();
+    if (camera === 'reading') {
+      updateScanActions();
+      await autoCapture(blob, signal, headers);
+    }
   } catch (error) {
     if (!signal.aborted) clear(camera, error.message);
   }
@@ -171,11 +193,59 @@ function updateScanActions() {
   byId('page-count').textContent = pages.size;
   byId('capture').disabled = !live.has('reading') || pages.size >= pageLimit;
   byId('export').disabled = exporting || pages.size === 0;
+  byId('extract').disabled = extracting || pages.size === 0;
 }
-function addPage() {
-  const frame = live.get('reading');
-  if (!frame || pages.size >= pageLimit) return;
-  const url = URL.createObjectURL(frame.blob);
+async function autoCapture(blob, signal, headers) {
+  if (!byId('auto-capture').checked || pages.size >= pageLimit) return;
+  if (performance.now() - lastInspection < 550) return;
+  lastInspection = performance.now();
+  const status = byId('capture-status');
+  try {
+    const response = await fetch('/scan/inspect', { method: 'POST', body: blob, signal, headers });
+    if (!response.ok) throw new Error(await response.text());
+    const page = await response.json();
+    if (signal.aborted || !byId('auto-capture').checked) return;
+    if (!page.corners) {
+      stableCount = 0;
+      previousCorners = undefined;
+      status.textContent = page.status;
+      return;
+    }
+    const stable = previousCorners && page.corners.every(([x, y], i) =>
+      Math.hypot(x - previousCorners[i][0], y - previousCorners[i][1]) <= 10);
+    previousCorners = page.corners;
+    stableCount = stable ? stableCount + 1 : 1;
+    if (stableCount < 3) {
+      status.textContent = 'Hold the page steady.';
+      return;
+    }
+    const duplicate = capturedSignatures.some(signature => {
+      let difference = 0;
+      for (let i = 0; i < signature.length; i++) {
+        if (signature[i] !== page.signature[i]) difference++;
+      }
+      return difference <= 18;
+    });
+    if (duplicate) {
+      status.textContent = 'Page already captured. Turn to the next page or use Add page.';
+      return;
+    }
+    const bytes = Uint8Array.from(atob(page.jpeg), character => character.charCodeAt(0));
+    addPage(new Blob([bytes], { type: 'image/jpeg' }), page.signature);
+    stableCount = 0;
+    status.textContent = 'Page captured and straightened.';
+  } catch (error) {
+    if (!signal.aborted) {
+      byId('auto-capture').checked = false;
+      status.textContent = error.message || 'Automatic capture stopped. Use Add page to capture manually.';
+    }
+  }
+}
+
+function addPage(blob = live.get('reading')?.blob, signature) {
+  if (!blob || pages.size >= pageLimit) return;
+  const url = URL.createObjectURL(blob);
+  if (signature) capturedSignatures.push(signature);
   const row = document.createElement('li');
   const image = new Image();
   image.alt = 'Captured document page';
@@ -186,6 +256,7 @@ function addPage() {
     row.remove();
     URL.revokeObjectURL(url);
     pages.delete(row);
+    if (signature) capturedSignatures.splice(capturedSignatures.indexOf(signature), 1);
     updateScanActions();
   };
   const earlier = document.createElement('button');
@@ -196,7 +267,7 @@ function addPage() {
   };
   row.append(image, remove, earlier);
   byId('pages').append(row);
-  pages.set(row, frame.blob);
+  pages.set(row, blob);
   updateScanActions();
   byId('export-status').textContent = pages.size === pageLimit ? '20-page limit reached.' : '';
 }
@@ -223,7 +294,7 @@ async function exportPdf() {
     if (!response.ok) {
       throw new Error(response.status === 401 ? 'Enter the access token for this session.' : await response.text());
     }
-    downloadPdf(await response.blob(), 'hey-gig-searchable.pdf');
+    downloadFile(await response.blob(), 'hey-gig-searchable.pdf');
     status.textContent = 'Searchable PDF ready. Check your browser downloads.';
     refreshWorkspace();
   } catch (error) {
@@ -234,7 +305,7 @@ async function exportPdf() {
   }
 }
 
-function downloadPdf(blob, filename) {
+function downloadFile(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -294,7 +365,7 @@ async function refreshWorkspace() {
       row.textContent = `Scan ${doc.id} · ${doc.pages} page${doc.pages === 1 ? '' : 's'}`;
       row.append(action('Download', async () => {
         const pdf = await workspaceRequest('/library/' + doc.id);
-        downloadPdf(await pdf.blob(), `hey-gig-${doc.id}.pdf`);
+        downloadFile(await pdf.blob(), `hey-gig-${doc.id}.pdf`);
       }), action('Draft share', async () => {
         const recipient = window.prompt('Recipient for this share draft');
         if (!recipient?.trim()) return;
@@ -327,7 +398,53 @@ async function refreshWorkspace() {
 
 byId('connect').onclick = connect;
 byId('stop').onclick = stop;
-byId('capture').onclick = addPage;
+byId('capture').onclick = () => addPage();
+byId('auto-capture').onchange = () => {
+  stableCount = 0;
+  previousCorners = undefined;
+  byId('capture-status').textContent = byId('auto-capture').checked ? 'Fit all four corners in view.' : '';
+};
+byId('extract').onclick = async () => {
+  if (extracting) return;
+  extracting = true;
+  updateScanActions();
+  const status = byId('export-status');
+  const input = Array.from(byId('pages').children, row => pages.get(row));
+  const output = [];
+  try {
+    for (const [index, blob] of input.entries()) {
+      status.textContent = `Extracting page ${index + 1} of ${input.length}…`;
+      const response = await fetch('/scan/extract', { method: 'POST', body: blob,
+        headers: { Authorization: 'Bearer ' + byId('token').value.trim() } });
+      if (!response.ok) throw new Error((await response.text()) || 'Extraction failed.');
+      output.push({ page: index + 1, ...await response.json() });
+    }
+    extractedPages = output;
+    const panel = byId('extraction');
+    const content = byId('extraction-pages');
+    content.replaceChildren();
+    for (const page of output) {
+      const heading = document.createElement('h3');
+      heading.textContent = `Page ${page.page}`;
+      const text = document.createElement('p');
+      text.style.whiteSpace = 'pre-wrap';
+      text.textContent = page.lines.map(line => line.text).join('\n') || 'No readable text found.';
+      content.append(heading, text);
+    }
+    panel.hidden = false;
+    panel.open = true;
+    status.textContent = 'Extraction complete.';
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    extracting = false;
+    updateScanActions();
+  }
+};
+byId('save-extraction').onclick = () => downloadFile(
+  new Blob([JSON.stringify({ pages: extractedPages }, null, 2)], { type: 'application/json' }),
+  'hey-gig-extraction.json'
+);
 byId('export').onclick = exportPdf;
 byId('token').addEventListener('keydown', event => {
   if (event.key === 'Enter') connect();

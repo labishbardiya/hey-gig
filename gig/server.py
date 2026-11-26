@@ -12,6 +12,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from gig.library import Library
+from gig.scan import extract_lines, inspect_page
 from gig.ocr import MAX_PAGES, searchable_pdf
 
 MAX_FRAME = 2 * 1024 * 1024
@@ -116,6 +117,30 @@ def make_server(host, port, token, library_path=None):
             finally:
                 ocr_slot.release()
 
+        def analyze_page(self):
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 4 <= size <= MAX_FRAME:
+                    return self.reply(413, b'Invalid page size.')
+                self.connection.settimeout(5)
+                jpeg = self.rfile.read(size)
+                if len(jpeg) != size or not jpeg.startswith(b'\xff\xd8') or not jpeg.endswith(b'\xff\xd9'):
+                    return self.reply(400, b'Invalid JPEG page.')
+                if self.path == '/scan/inspect':
+                    data = inspect_page(jpeg)
+                else:
+                    if not ocr_slot.acquire(blocking=False):
+                        return self.reply(503, b'Another OCR job is running.')
+                    try:
+                        data = {'engine': 'tesseract', 'language': 'eng', 'lines': extract_lines(jpeg)}
+                    finally:
+                        ocr_slot.release()
+            except ImportError:
+                return self.reply(503, b'Automatic capture needs OpenCV on the Mac.')
+            except (ValueError, subprocess.SubprocessError, OSError):
+                return self.reply(422, b'Page processing failed. Try recapturing the page.')
+            return self.reply(200, json.dumps(data).encode(), 'application/json')
+
         def update_workspace(self):
             try:
                 length = int(self.headers.get('Content-Length', '0'))
@@ -142,6 +167,8 @@ def make_server(host, port, token, library_path=None):
                 return self.reply(401)
             if library and self.path in ('/approvals', '/approvals/decision'):
                 return self.update_workspace()
+            if self.path in ('/scan/inspect', '/scan/extract'):
+                return self.analyze_page()
             if self.path == '/scan/pdf':
                 return self.export_pdf()
             if self.path not in ('/frame/scene', '/frame/reading'):
