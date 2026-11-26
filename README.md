@@ -149,3 +149,32 @@ and library. For library-only use, start `gig.server --port 18765` with
 The companion shows saved documents, share approvals, activity, reminders and
 routines. Reminders become due in the running backend and appear in Activity.
 The privacy switch clears the Mac receiver frame cache and releases the Pi camera when using the SSH preview launcher. The software control does not mute unrelated Pi audio.
+
+## Local assistant
+
+Start the Pi preview with `--identity-file` so the Mac can open an SSH
+audio session. On the Mac install `whisper-cpp` and `poppler` with Homebrew.
+Place the whisper.cpp English base model at
+`~/.local/share/hey-gig/models/ggml-base.en.bin`, or set
+`GIG_WHISPER_MODEL` to an alternate local model path. Speech replies use
+macOS speech synthesis. Select a Galaxy Buds headset profile with both
+input and output available in PipeWire on the Pi.
+
+Open **Assistant** on the Mac or tablet. **Talk for 5 seconds** records
+through the Pi buds, then transcribes and responds locally. The same
+commands are available from the text field. Try these examples:
+
+- Save a two-page scan with distinct terms, then ask
+  “What does the scan say about lighthouse?” The assistant quotes a
+  matching line from the most recent searchable PDF and names the page.
+- Say “Remind me to charge the camera in 10 minutes.” Check Reminders
+  for the saved entry. For a request without a supported interval, use
+  **Choose reminder time** to complete the prefilled form.
+- Save an **Open scanner** routine named “Scan desk.” Say “Run Scan desk”
+  and check that Scanner opens and Activity logs the run.
+- Pause camera capture. The Assistant disables Talk, the backend rejects
+  new voice requests, and the Pi checks privacy during capture and playback.
+
+This is an English push-to-talk prototype with keyword-based document
+answers and a small set of local commands. Physical audio device
+availability is checked on each request.

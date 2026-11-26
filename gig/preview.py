@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 
 from gig.server import library_path, make_server
+from gig.voice import PiVoice
 
 
 # Executed with the Pi's system Python so apt-installed camera libraries are visible.
@@ -87,7 +88,8 @@ def main():
     token = os.environ.get("GIG_TOKEN") or secrets.token_urlsafe(32)
     if len(token) < 24:
         parser.error("GIG_TOKEN must be at least 24 characters")
-    viewer = make_server('127.0.0.1', args.port, token, library_path())
+    voice = PiVoice(args.pi, args.identity_file, args.remote_port, token) if args.identity_file else None
+    viewer = make_server('127.0.0.1', args.port, token, library_path(), voice)
     worker = threading.Thread(target=viewer.serve_forever, daemon=True)
     worker.start()
     destination = f'http://127.0.0.1:{args.remote_port}'

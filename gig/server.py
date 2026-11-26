@@ -12,6 +12,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from gig.library import Library
+from gig.voice import dispatch
 from gig.scan import extract_lines, inspect_page
 from gig.ocr import MAX_PAGES, searchable_pdf
 
@@ -45,10 +46,11 @@ class Frames:
 PAGE = Path(__file__).with_name('hud.html').read_bytes()
 
 
-def make_server(host, port, token, library_path=None):
+def make_server(host, port, token, library_path=None, voice=None):
     library = Library(library_path) if library_path else None
     frames = Frames()
     ocr_slot = threading.Lock()
+    voice_slot = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def reply(self, code, body=b'', kind='text/plain', attachment=None):
@@ -182,6 +184,11 @@ def make_server(host, port, token, library_path=None):
                     if action == 'privacy':
                         frames.set_paused(True)
                     return self.json_reply({'action': action})
+                elif self.path == '/assistant/text':
+                    command = data.get('command')
+                    if not isinstance(command, str) or not 1 <= len(command.strip()) <= 400:
+                        raise ValueError('Enter a question or local command.')
+                    return self.json_reply(self.assistant_reply(command))
                 elif self.path == '/privacy':
                     paused = data.get('paused')
                     if type(paused) is not bool:
@@ -193,14 +200,50 @@ def make_server(host, port, token, library_path=None):
                 return self.reply(408)
             except sqlite3.Error:
                 return self.reply(503, b'Library is unavailable. Try again.')
+            except (subprocess.SubprocessError, OSError):
+                return self.reply(503, b'Local assistant could not read the document.')
             return self.reply(204)
+
+        def assistant_reply(self, command):
+            result = dispatch(library, command)
+            if result.get('action') == 'privacy':
+                frames.set_paused(True)
+            return result
+
+        def voice_reply(self):
+            if frames.paused:
+                return self.reply(423, b'Microphone paused by privacy control.')
+            if voice is None:
+                return self.reply(503, b'Start the Pi preview with an SSH key to use Galaxy Buds voice.')
+            if not voice_slot.acquire(blocking=False):
+                return self.reply(409, b'A voice request is already running.')
+            try:
+                command = voice.listen()
+                if frames.paused:
+                    return self.reply(423, b'Voice stopped by privacy control.')
+                result = self.assistant_reply(command)
+                result['transcript'] = command
+                if not frames.paused:
+                    try:
+                        voice.speak(result['answer'])
+                    except (ValueError, subprocess.SubprocessError, OSError):
+                        result['audio_warning'] = 'The reply is available here. Galaxy Buds playback failed.'
+                return self.json_reply(result)
+            except (ValueError, EOFError) as error:
+                return self.reply(422, str(error).encode())
+            except (subprocess.SubprocessError, OSError):
+                return self.reply(503, b'Local voice failed. Check Whisper and the Pi connection.')
+            finally:
+                voice_slot.release()
 
         def do_POST(self):
             if not self.authorized():
                 return self.reply(401)
+            if library and self.path == '/assistant/voice':
+                return self.voice_reply()
             if library and self.path in (
                 '/approvals', '/approvals/decision', '/reminders', '/reminders/cancel',
-                '/routines', '/routines/run', '/privacy',
+                '/routines', '/routines/run', '/privacy', '/assistant/text',
             ):
                 return self.update_workspace()
             if self.path in ('/scan/inspect', '/scan/extract'):

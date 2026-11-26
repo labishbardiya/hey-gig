@@ -208,8 +208,24 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     <ul id="routines"></ul>
   </section>
 </div>
+<div class="workspace">
+  <section data-screen="assistant">
+    <h2>Local assistant</h2>
+    <p>Ask about your latest saved scan, set a reminder, or run a saved routine.</p>
+    <form id="assistant-form" class="controls">
+      <label>Question or command <input id="assistant-command" maxlength="400" required></label>
+      <button id="assistant-send">Send</button>
+      <button id="assistant-talk" type="button" disabled>Talk for 5 seconds</button>
+    </form>
+    <p id="assistant-transcript"></p>
+    <p id="assistant-answer" role="status"></p>
+    <button id="assistant-source" type="button" hidden>Download source PDF</button>
+    <button id="finish-reminder" type="button" hidden>Choose reminder time</button>
+  </section>
+</div>
 <nav class="app-nav" aria-label="Hey GIG screens" hidden>
   <button type="button" data-view="scanner">Scanner</button>
+  <button type="button" data-view="assistant">Assistant</button>
   <button type="button" data-view="activity">Activity</button>
   <button type="button" data-view="reminders">Reminders</button>
   <button type="button" data-view="routines">Routines</button>
@@ -226,6 +242,7 @@ if (companion) {
 }
 const nav = document.querySelector('.app-nav');
 let activity = [];
+let assistantBusy = false;
 function showScreen(view, scroll = true) {
   const selected = nav.querySelector(`[data-view="${view}"]`);
   document.querySelector('h1').textContent = selected.textContent;
@@ -567,6 +584,7 @@ async function refreshWorkspace() {
     const state = await response.json();
     privacyPaused = state.privacy;
     byId('privacy').disabled = false;
+    byId('assistant-talk').disabled = privacyPaused || assistantBusy;
     byId('privacy').textContent = privacyPaused ? 'Resume camera capture' : 'Pause camera capture';
     if (privacyPaused) cameras.forEach(camera => clear(camera, 'Preview paused'));
     renderList('reminders', state.reminders, (row, reminder) => {
@@ -626,6 +644,56 @@ async function refreshWorkspace() {
   }
 }
 
+async function runAssistant(mode, data) {
+  if (assistantBusy) return;
+  assistantBusy = true;
+  byId('assistant-send').disabled = byId('assistant-talk').disabled = true;
+  const answer = byId('assistant-answer');
+  const followup = byId('finish-reminder');
+  followup.hidden = true;
+  const source = byId('assistant-source');
+  source.hidden = true;
+  byId('assistant-transcript').textContent = '';
+  answer.textContent = mode === 'voice' ? 'Speak now. Recording for five seconds…' : 'Looking up your request…';
+  try {
+    const result = await (await workspaceRequest('/assistant/' + mode, data)).json();
+    if (result.transcript) byId('assistant-transcript').textContent = result.transcript;
+    answer.textContent = [result.answer, result.audio_warning].filter(Boolean).join(' ');
+    if (result.page) {
+      source.hidden = false;
+      source.onclick = async () => {
+        try {
+          const pdf = await workspaceRequest('/library/' + result.document);
+          downloadFile(await pdf.blob(), `hey-gig-${result.document}.pdf`);
+        } catch (error) {
+          answer.textContent = error.message;
+        }
+      };
+    }
+    if (result.reminder) {
+      followup.hidden = false;
+      followup.onclick = () => {
+        byId('reminder-title').value = result.reminder;
+        byId('reminder-form').closest('details').open = true;
+        showScreen('reminders');
+        byId('reminder-due').focus();
+      };
+    }
+    if (result.action === 'scan') showScreen('scanner');
+    await refreshWorkspace();
+  } catch (error) {
+    answer.textContent = error.message;
+  } finally {
+    assistantBusy = false;
+    byId('assistant-send').disabled = false;
+    byId('assistant-talk').disabled = privacyPaused;
+  }
+}
+byId('assistant-form').onsubmit = event => {
+  event.preventDefault();
+  runAssistant('text', { command: byId('assistant-command').value });
+};
+byId('assistant-talk').onclick = () => runAssistant('voice', {});
 byId('connect').onclick = connect;
 byId('stop').onclick = stop;
 byId('capture').onclick = () => addPage();
