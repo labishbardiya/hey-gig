@@ -51,6 +51,7 @@ def main():
     parser.add_argument('pi', help='Pi SSH destination, for example gig@gig-pi.local')
     parser.add_argument('--camera', choices=['usb', 'csi', 'both'], default='usb')
     parser.add_argument('--device', default='/dev/video0', help='USB video capture device on the Pi')
+    parser.add_argument('--port', type=int, default=0, help='Mac viewer port (18765 for the USB tablet companion)')
     parser.add_argument('--remote-port', type=int, default=18880)
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.@-]*', args.pi):
@@ -58,8 +59,10 @@ def main():
     if not 1 <= args.remote_port <= 65535:
         parser.error('The remote port must be between 1 and 65535')
 
+    if not 0 <= args.port <= 65535:
+        parser.error('Viewer port must be between 0 and 65535')
     token = secrets.token_urlsafe(32)
-    viewer = make_server('127.0.0.1', 0, token, library_path())
+    viewer = make_server('127.0.0.1', args.port, token, library_path())
     worker = threading.Thread(target=viewer.serve_forever, daemon=True)
     worker.start()
     destination = f'http://127.0.0.1:{args.remote_port}'

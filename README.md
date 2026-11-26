@@ -130,3 +130,23 @@ extraction JSON** downloads the lines and words, each word's confidence and
 bounding box in processed OCR image pixels. Text extraction straightens and enhances manual and automatic captures. **Save searchable PDF** still exports the
 reviewed page order. See [extraction trade-offs and Mac results](ARCHITECTURE.md)
 for the comparison with PaddleOCR.
+
+## USB tablet companion
+
+Build with Android SDK Platform 34, Build Tools 34.0.0 and JDK 17:
+
+```sh
+./tablet/build.sh
+adb install -r tablet/build/hey-gig.apk
+adb reverse tcp:18765 tcp:18765
+```
+
+Use `--port 18765` when starting `gig.preview` on the Mac, then enter that
+session's token in the tablet app. Both screens then use the same receiver
+and library. For library-only use, start `gig.server --port 18765` with
+`GIG_TOKEN` set. The app uses USB loopback and requires the Mac server.
+
+The companion shows saved documents, share approvals, activity, reminders and
+routines. Reminders become due in the running backend and appear in Activity.
+The preview pause clears the Mac receiver's frames and discards new uploads
+until resumed. The Pi camera process and the earbuds are controlled separately.

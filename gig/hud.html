@@ -5,25 +5,30 @@
 <meta name="description" content="Hey GIG camera and searchable document workspace">
 <title>Hey GIG · Glasses HUD</title>
 <style>
-/* Hallmark v2.0.0 | workspace | graphite and mint | live camera as product imagery */
+/* Hallmark v2.0.0 | workspace | dusk: live camera/periwinkle-apricot/glass | live camera as product imagery */
 /* Critique: give capture the primary canvas and keep review controls adjacent. */
 :root {
   color-scheme: dark;
-  --bg: #101815; --panel: #182521; --input: #0f1b17; --stage: #090f0d;
-  --ink: #f0f9f2; --muted: #b0c6b9; --line: #3a5549; --accent: #c3ef8a;
-  --on-accent: #152611; --paper: #fbfcfa; --print-ink: #121812;
-  --body: "Instrument Sans", system-ui, sans-serif;
-  --display: "Bricolage Grotesque", system-ui, sans-serif;
+  --bg: oklch(17.5% .014 268); --panel: oklch(21% .016 268);
+  --input: oklch(25% .017 268); --stage: oklch(10% .022 268);
+  --ink: oklch(96% .006 75); --muted: oklch(75% .016 262);
+  --line: oklch(39% .016 266); --accent: oklch(77% .10 274);
+  --on-accent: oklch(19% .035 274); --waiting: oklch(83% .095 62);
+  --paper: oklch(95.5% .008 75); --print-ink: oklch(21% .016 268);
+  --glass: oklch(22% .018 268 / .58);
+  --glass-edge: inset 0 1px 0 oklch(100% 0 0 / .12);
+  --body: "Wix Madefor Text", system-ui, sans-serif;
+  --display: "Wix Madefor Display", system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
 html, body { overflow-x: clip; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--body); }
 main { width: min(1250px, 92%); margin: 0 auto 40px; }
 header, .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-header { padding: 24px 0; border-bottom: 1px solid var(--line); }
+header { background: var(--glass); box-shadow: var(--glass-edge); padding: 24px 0; border-bottom: 1px solid var(--line); }
 .brand { margin-right: auto; color: var(--accent); font-weight: 750; font-size: 21px; }
-h1, h2 { font-family: var(--display); min-width: 0; overflow-wrap: break-word; text-wrap: balance; }
-h1 { margin: 0; font-size: clamp(36px, 5vw, 70px); line-height: 1; letter-spacing: -.05em; }
+h1, h2 { font-family: var(--display); font-weight: 500; min-width: 0; overflow-wrap: break-word; text-wrap: balance; }
+h1 { margin: 0; font-size: clamp(36px, 5vw, 70px); line-height: 1; letter-spacing: -.022em; }
 h2 { margin: 0 0 12px; font-size: 23px; }
 .intro { margin: 32px 0 20px; }
 p { color: var(--muted); margin-block: 8px; }
@@ -31,7 +36,7 @@ label { font-size: 14px; color: var(--muted); }
 input, button { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; }
 input { border-color: var(--muted); background: var(--input); color: var(--ink); max-width: 100%; }
 button { background: var(--panel); color: var(--ink); cursor: pointer; }
-#connect, #export { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+#connect, #export { background: var(--accent); color: var(--on-accent); border-color: var(--accent); border-radius: 999px; font-weight: 700; }
 button:not(:disabled):hover { filter: brightness(1.14); }
 button:not(:disabled):active { filter: brightness(.9); }
 button:disabled, #connect:disabled, #export:disabled { background: var(--stage); color: var(--muted); border-color: var(--line); cursor: not-allowed; }
@@ -67,6 +72,11 @@ button:disabled, #connect:disabled, #export:disabled { background: var(--stage);
   #pages li:last-child { break-after: auto; }
   #pages img { width: 100%; max-height: 235mm; object-fit: contain; }
 }
+#capture-status, #export-status { color: var(--waiting); }
+.organize { margin-top: 28px; }
+.organize form { display: flex; flex-wrap: wrap; gap: 8px; }
+.organize select { font: inherit; padding: 8px; }
+body.companion .scan-layout, body.companion #stop, body.companion #intro-copy { display: none; }
 </style>
 <main>
 <header>
@@ -74,8 +84,9 @@ button:disabled, #connect:disabled, #export:disabled { background: var(--stage);
   <label>Access token <input id="token" type="password" autocomplete="off"></label>
   <button id="connect">Connect</button>
   <button id="stop" disabled>Stop preview</button>
+  <button id="privacy" disabled>Pause camera preview</button>
 </header>
-<div class="intro"><h1>Document scanner</h1><p>Capture pages and export one searchable PDF.</p></div>
+<div class="intro"><h1>Document scanner</h1><p id="intro-copy">Capture pages and export one searchable PDF.</p></div>
 <p id="status" role="status">Preview disconnected</p>
 <div class="scan-layout">
 <div class="views">
@@ -106,10 +117,35 @@ button:disabled, #connect:disabled, #export:disabled { background: var(--stage);
   <section><h2>Approvals</h2><ul id="approvals"></ul></section>
   <section><h2>Activity</h2><ul id="activity"></ul></section>
 </div>
+<div class="workspace organize">
+  <section><h2>Reminders</h2>
+    <form id="reminder-form">
+      <label>Reminder <input id="reminder-title" required maxlength="200"></label>
+      <label>Due <input id="reminder-due" type="datetime-local" required></label>
+      <button>Schedule</button>
+    </form>
+    <ul id="reminders"></ul>
+  </section>
+  <section><h2>Routines</h2>
+    <form id="routine-form">
+      <label>Name <input id="routine-name" required maxlength="200"></label>
+      <label>Action <select id="routine-action"><option value="privacy">Pause camera preview</option><option value="scan">Open scanner</option></select></label>
+      <button>Save routine</button>
+    </form>
+    <ul id="routines"></ul>
+  </section>
+</div>
 </main>
 <script>
 const byId = id => document.getElementById(id);
+const companion = new URLSearchParams(location.search).has('companion');
+if (companion) {
+  document.body.classList.add('companion');
+  document.querySelector('h1').textContent = 'Companion';
+}
 const cameras = ['scene', 'reading'];
+let privacyPaused = false;
+let workspaceRefresh;
 const live = new Map();
 const pages = new Map();
 const pageLimit = 20;
@@ -139,7 +175,7 @@ async function update(camera, signal, headers) {
   try {
     const response = await fetch(byId(camera).dataset.src, { signal, headers, cache: 'no-store' });
     if (!response.ok) {
-      const message = {401: 'Invalid access token', 404: 'Waiting for frames'}[response.status];
+      const message = {401: 'Invalid access token', 404: 'Waiting for frames', 423: 'Preview paused'}[response.status];
       throw new Error(message || 'Camera request failed');
     }
     const blob = await response.blob();
@@ -174,6 +210,9 @@ async function connect() {
   byId('stop').disabled = false;
   byId('status').textContent = 'Preview open';
   refreshWorkspace();
+  clearInterval(workspaceRefresh);
+  workspaceRefresh = setInterval(refreshWorkspace, 4000);
+  if (companion) return;
   while (!signal.aborted) {
     await Promise.all(cameras.map(camera => update(camera, signal, headers)));
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -357,10 +396,70 @@ function renderList(id, entries, render, empty) {
   }
 }
 
+function formAction(id, path, payload) {
+  const form = byId(id);
+  form.onsubmit = async event => {
+    event.preventDefault();
+    const button = form.querySelector('button');
+    button.disabled = true;
+    try {
+      await workspaceRequest(path, payload());
+      form.reset();
+      await refreshWorkspace();
+    } catch (error) {
+      byId('workspace-status').textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+formAction('reminder-form', '/reminders', () => ({
+  title: byId('reminder-title').value,
+  due: new Date(byId('reminder-due').value).toISOString()
+}));
+formAction('routine-form', '/routines', () => ({
+  name: byId('routine-name').value,
+  action: byId('routine-action').value
+}));
+byId('privacy').onclick = async () => {
+  try {
+    await workspaceRequest('/privacy', { paused: !privacyPaused });
+    await refreshWorkspace();
+  } catch (error) {
+    byId('workspace-status').textContent = error.message;
+  }
+};
+
 async function refreshWorkspace() {
   try {
     const response = await workspaceRequest('/workspace');
     const state = await response.json();
+    privacyPaused = state.privacy;
+    byId('privacy').disabled = false;
+    byId('privacy').textContent = privacyPaused ? 'Resume camera preview' : 'Pause camera preview';
+    if (privacyPaused) cameras.forEach(camera => clear(camera, 'Preview paused'));
+    renderList('reminders', state.reminders, (row, reminder) => {
+      row.textContent = `${reminder.title} · ${new Date(reminder.due).toLocaleString()}`;
+      if (reminder.state === 'due') row.append(' · Due');
+      else row.append(action('Cancel', async () => {
+        await workspaceRequest('/reminders/cancel', { id: reminder.id });
+        await refreshWorkspace();
+      }));
+    }, 'No reminders.');
+    renderList('routines', state.routines, (row, routine) => {
+      row.textContent = routine.name;
+      row.append(action('Run', async () => {
+        const response = await workspaceRequest('/routines/run', { id: routine.id });
+        const result = await response.json();
+        if (result.action === 'scan') {
+          document.body.classList.remove('companion');
+          if (companion) location.search = '';
+          else byId('capture').scrollIntoView({ block: 'center' });
+        }
+        await refreshWorkspace();
+      }));
+    }, 'No routines.');
     renderList('library', state.documents, (row, doc) => {
       row.textContent = `Scan ${doc.id} · ${doc.pages} page${doc.pages === 1 ? '' : 's'}`;
       row.append(action('Download', async () => {
