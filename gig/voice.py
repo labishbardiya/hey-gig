@@ -21,16 +21,26 @@ def allowed():
     with urllib.request.urlopen(request, timeout=1) as response:
         state = json.load(response)
         return not state['paused'] and state['epoch'] == epoch
-nodes = json.loads(subprocess.check_output(['pw-dump'], timeout=4))
-wanted = 'Audio/Source' if mode == 'record' else 'Audio/Sink'
-for node in nodes:
-    props = node.get('info', {}).get('props', {})
-    name = props.get('node.name', '')
-    if props.get('media.class') == wanted and name.startswith(('bluez_input.', 'bluez_output.')):
-        if 'A8:BA:69:F4:68:21' in name or 'A8_BA_69_F4_68_21' in name:
-            target = str(node['id'])
-            break
-else:
+def find_buds():
+    wanted = 'Audio/Source' if mode == 'record' else 'Audio/Sink'
+    nodes = json.loads(subprocess.check_output(['pw-dump'], timeout=4))
+    for node in nodes:
+        props = node.get('info', {}).get('props', {})
+        name = props.get('node.name', '')
+        if props.get('media.class') == wanted and name.startswith(('bluez_input.', 'bluez_output.')):
+            if 'A8:BA:69:F4:68:21' in name or 'A8_BA_69_F4_68_21' in name:
+                return str(node['id'])
+    return None
+
+target = None
+for attempt in range(8):
+    if not allowed():
+        sys.exit('Voice is paused by privacy control.')
+    target = find_buds()
+    if target:
+        break
+    time.sleep(.25)
+if target is None:
     sys.exit('Galaxy Buds audio node unavailable. Connect the Buds and enable the headset profile.')
 with tempfile.TemporaryDirectory() as directory:
     path = os.path.join(directory, 'clip.wav')
