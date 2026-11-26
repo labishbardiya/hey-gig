@@ -45,15 +45,19 @@ figcaption { position: absolute; bottom: 0; width: 100%; padding: 14px 20px; bac
 <h2>Document pages</h2>
 <div class="controls">
   <button id="capture" disabled>Add reading frame</button>
-  <button id="export" disabled>Print / Save as PDF</button>
+  <button id="export" disabled>Save searchable PDF</button>
 </div>
+<p id="export-status" role="status"></p>
 <ol id="pages" aria-label="Captured document pages"></ol>
 </main>
 <script>
 const byId = id => document.getElementById(id);
 const cameras = ['scene', 'reading'];
 const live = new Map();
+const pages = new Map();
+const pageLimit = 20;
 let session;
+let exporting = false;
 function clear(camera, message) {
   if (live.has(camera)) URL.revokeObjectURL(live.get(camera).url);
   live.delete(camera);
@@ -76,7 +80,7 @@ async function update(camera, signal, headers) {
     live.set(camera, { blob, url });
     byId(camera).src = url;
     byId(camera + '-state').textContent = 'Live';
-    if (camera === 'reading') byId('capture').disabled = false;
+    if (camera === 'reading') updateScanActions();
   } catch (error) {
     if (!signal.aborted) clear(camera, error.message);
   }
@@ -111,9 +115,13 @@ function stop() {
   byId('status').textContent = 'Preview stopped. Stop capture in Mac Terminal.';
 }
 
+function updateScanActions() {
+  byId('capture').disabled = !live.has('reading') || pages.size >= pageLimit;
+  byId('export').disabled = exporting || pages.size === 0;
+}
 function addPage() {
   const frame = live.get('reading');
-  if (!frame) return;
+  if (!frame || pages.size >= pageLimit) return;
   const url = URL.createObjectURL(frame.blob);
   const row = document.createElement('li');
   const image = new Image();
@@ -124,17 +132,58 @@ function addPage() {
   remove.onclick = () => {
     row.remove();
     URL.revokeObjectURL(url);
-    byId('export').disabled = !byId('pages').children.length;
+    pages.delete(row);
+    updateScanActions();
   };
   row.append(image, remove);
   byId('pages').append(row);
-  byId('export').disabled = false;
+  pages.set(row, frame.blob);
+  updateScanActions();
+  byId('export-status').textContent = pages.size === pageLimit ? '20-page limit reached.' : '';
+}
+
+async function exportPdf() {
+  if (exporting || !pages.size) return;
+  exporting = true;
+  updateScanActions();
+  const status = byId('export-status');
+  status.textContent = 'Recognizing text…';
+  const parts = [];
+  for (const page of pages.values()) {
+    const header = new DataView(new ArrayBuffer(4));
+    header.setUint32(0, page.size);
+    parts.push(header.buffer, page);
+  }
+  try {
+    const response = await fetch('/scan/pdf', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + byId('token').value.trim() },
+      body: new Blob(parts, { type: 'application/octet-stream' })
+    });
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? 'Enter the access token for this session.' : await response.text());
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'hey-gig-searchable.pdf';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    status.textContent = 'Searchable PDF ready. Check your browser downloads.';
+  } catch (error) {
+    status.textContent = error.message || 'PDF export failed.';
+  } finally {
+    exporting = false;
+    updateScanActions();
+  }
 }
 
 byId('connect').onclick = connect;
 byId('stop').onclick = stop;
 byId('capture').onclick = addPage;
-byId('export').onclick = () => window.print();
+byId('export').onclick = exportPdf;
 byId('token').addEventListener('keydown', event => {
   if (event.key === 'Enter') connect();
 });

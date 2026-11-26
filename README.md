@@ -75,6 +75,22 @@ Confirm the wearer hears the phrase and that the selected input is the earbud mi
 
 Run both previews for 20 minutes. Keep a second Pi terminal open and use `watch -n 5 'vcgencmd measure_temp && vcgencmd get_throttled'`. Record the initial and final temperature, highest observed temperature, initial/final throttling flags, feed interruptions, and audio dropouts. Check the microphone and playback while both feeds run. Stop the launcher and confirm the camera devices can be opened again. Stop early if sustained heat or current throttling returns. Full electrical privacy-switch verification belongs to milestone two.
 
+## Searchable PDF export
+
+Start the Mac preview and connect to the reading camera. Hold each page steady in
+view and choose **Add reading frame**. Review the thumbnails and remove any
+unwanted captures. Choose **Save searchable PDF** to download one PDF with up to
+20 pages in capture order. The browser saves it using its download settings.
+
+The Mac receiver needs `tesseract` with the English (`eng`) language data and
+`qpdf` on its PATH. The Homebrew OCRmyPDF installation supplies both commands.
+Tesseract recognizes the camera JPEGs directly and adds a text layer to each
+page. qpdf merges the pages. OCR uses local temporary files during export.
+The capture queue lasts for the lifetime of the browser tab.
+
+Use a sharp, well-lit, upright image of printed text. The current mode expects a
+block of English text. Searchability and recognition accuracy depend on the scan.
+
 ## Local verification
 
 ```sh
