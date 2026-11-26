@@ -2,6 +2,7 @@
 import argparse
 import hmac
 import os
+from pathlib import Path
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,27 +25,7 @@ class Frames:
         return frame[1] if frame and time.monotonic() - frame[0] < 5 else None
 
 
-PAGE = b'''<!doctype html><meta charset="utf-8"><title>GIG camera console</title>
-<h1>GIG camera console</h1><p>Live preview only. Images are not recorded.</p>
-<label>Access token <input id="token" type="password"></label>
-<button onclick="start()">Connect</button><button onclick="stop()">Stop preview</button>
-<p id="status">Disconnected</p><div id="views"></div>
-<script>
-let active=false, generation=0, urls={};
-function stop(){active=false;generation++;document.querySelectorAll('img').forEach(i=>i.removeAttribute('src'));
-Object.values(urls).forEach(URL.revokeObjectURL);urls={};statusText('Preview stopped; camera sender may still be running.');}
-function statusText(t){document.getElementById('status').textContent=t;}
-async function start(){if(active)return;active=true;const session=++generation;
-document.getElementById('views').innerHTML=['scene','reading'].map(c=>`<section><h2>${c}</h2><img id="${c}" width="640"><p id="${c}-status"></p></section>`).join('');
-while(active && session===generation){await Promise.all(['scene','reading'].map(async c=>{try{
-let r=await fetch('/frame/'+c,{headers:{Authorization:'Bearer '+document.getElementById('token').value},cache:'no-store'});
-if(!r.ok)throw Error(r.status===404?'No recent frames':r.status===401?'Invalid token':'Request failed');
-let blob=await r.blob();if(session!==generation)return;let u=URL.createObjectURL(blob);
-document.getElementById(c).src=u;if(urls[c])URL.revokeObjectURL(urls[c]);urls[c]=u;
-document.getElementById(c+'-status').textContent='Live';
-}catch(e){if(session!==generation)return;document.getElementById(c+'-status').textContent=e.message;document.getElementById(c).removeAttribute('src');}}));
-if(session!==generation)return;statusText('Preview open. Check each camera below.');await new Promise(r=>setTimeout(r,200));}}
-</script>'''
+PAGE = Path(__file__).with_name('hud.html').read_bytes()
 
 
 def make_server(host, port, token):

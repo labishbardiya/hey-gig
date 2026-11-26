@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hey GIG · Glasses HUD</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: #091019; color: #edf6fa; font: 16px system-ui, sans-serif; }
+main { width: min(1150px, 94%); margin: 32px auto; }
+header, .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+h1 { margin-right: auto; letter-spacing: .04em; }
+input, button { font: inherit; border: 1px solid #51798b; border-radius: 7px; padding: 8px 12px; }
+input { background: #101f2e; color: inherit; }
+button { background: #baf6ee; color: #092020; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+.views { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+.lens { position: relative; margin: 0; border: 1px solid #51798b; border-radius: 34px; overflow: hidden; background: #03080f; aspect-ratio: 4 / 3; }
+.lens img { width: 100%; height: 100%; object-fit: contain; }
+.lens img:not([src]) { visibility: hidden; }
+figcaption { position: absolute; bottom: 0; width: 100%; padding: 14px 20px; background: #091019db; display: flex; justify-content: space-between; }
+#pages { display: flex; flex-wrap: wrap; padding: 0; gap: 18px; list-style: none; }
+#pages img { display: block; width: 160px; margin-bottom: 6px; }
+@media print {
+  body { background: white; color: black; }
+  main { margin: 0; width: 100%; }
+  header, .views, .controls, #status, h2, button { display: none !important; }
+  #pages { display: block; margin: 0; }
+  #pages li { break-after: page; }
+  #pages li:last-child { break-after: auto; }
+  #pages img { width: 100%; max-height: 235mm; object-fit: contain; }
+}
+</style>
+<main>
+<header>
+  <h1>Hey GIG</h1>
+  <label>Access token <input id="token" type="password" autocomplete="off"></label>
+  <button id="connect">Connect</button>
+  <button id="stop" disabled>Stop preview</button>
+</header>
+<p id="status" role="status">Preview disconnected</p>
+<div class="views">
+  <figure class="lens"><img id="scene" alt="Scene camera"><figcaption>Scene <span id="scene-state">Offline</span></figcaption></figure>
+  <figure class="lens"><img id="reading" alt="Reading camera"><figcaption>Reading <span id="reading-state">Offline</span></figcaption></figure>
+</div>
+<h2>Document pages</h2>
+<div class="controls">
+  <button id="capture" disabled>Add reading frame</button>
+  <button id="export" disabled>Print / Save as PDF</button>
+</div>
+<ol id="pages" aria-label="Captured document pages"></ol>
+</main>
+<script>
+const byId = id => document.getElementById(id);
+const cameras = ['scene', 'reading'];
+const live = new Map();
+let session;
+function clear(camera, message) {
+  if (live.has(camera)) URL.revokeObjectURL(live.get(camera).url);
+  live.delete(camera);
+  byId(camera).removeAttribute('src');
+  byId(camera + '-state').textContent = message;
+  if (camera === 'reading') byId('capture').disabled = true;
+}
+
+async function update(camera, signal, headers) {
+  try {
+    const response = await fetch('/frame/' + camera, { signal, headers, cache: 'no-store' });
+    if (!response.ok) {
+      const message = {401: 'Invalid access token', 404: 'Waiting for frames'}[response.status];
+      throw new Error(message || 'Camera request failed');
+    }
+    const blob = await response.blob();
+    if (signal.aborted) return;
+    if (live.has(camera)) URL.revokeObjectURL(live.get(camera).url);
+    const url = URL.createObjectURL(blob);
+    live.set(camera, { blob, url });
+    byId(camera).src = url;
+    byId(camera + '-state').textContent = 'Live';
+    if (camera === 'reading') byId('capture').disabled = false;
+  } catch (error) {
+    if (!signal.aborted) clear(camera, error.message);
+  }
+}
+
+async function connect() {
+  if (session) return;
+  const token = byId('token').value.trim();
+  if (!token) {
+    byId('status').textContent = 'Enter the access token from Mac Terminal.';
+    byId('token').focus();
+    return;
+  }
+  session = new AbortController();
+  const signal = session.signal;
+  const headers = { Authorization: 'Bearer ' + token };
+  byId('connect').disabled = byId('token').disabled = true;
+  byId('stop').disabled = false;
+  byId('status').textContent = 'Preview open';
+  while (!signal.aborted) {
+    await Promise.all(cameras.map(camera => update(camera, signal, headers)));
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+}
+
+function stop() {
+  session?.abort();
+  session = undefined;
+  cameras.forEach(camera => clear(camera, 'Offline'));
+  byId('connect').disabled = byId('token').disabled = false;
+  byId('stop').disabled = true;
+  byId('status').textContent = 'Preview stopped. Stop capture in Mac Terminal.';
+}
+
+function addPage() {
+  const frame = live.get('reading');
+  if (!frame) return;
+  const url = URL.createObjectURL(frame.blob);
+  const row = document.createElement('li');
+  const image = new Image();
+  image.alt = 'Captured document page';
+  image.src = url;
+  const remove = document.createElement('button');
+  remove.textContent = 'Remove page';
+  remove.onclick = () => {
+    row.remove();
+    URL.revokeObjectURL(url);
+    byId('export').disabled = !byId('pages').children.length;
+  };
+  row.append(image, remove);
+  byId('pages').append(row);
+  byId('export').disabled = false;
+}
+
+byId('connect').onclick = connect;
+byId('stop').onclick = stop;
+byId('capture').onclick = addPage;
+byId('export').onclick = () => window.print();
+byId('token').addEventListener('keydown', event => {
+  if (event.key === 'Enter') connect();
+});
+</script>
+</html>
