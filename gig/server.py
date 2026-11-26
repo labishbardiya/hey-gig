@@ -65,7 +65,7 @@ def make_server(host, port, token, library_path=None):
             return hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + token)
 
         def do_GET(self):
-            if self.path == '/':
+            if self.path in ('/', '/?companion'):
                 return self.reply(200, PAGE, 'text/html; charset=utf-8')
             if not self.authorized():
                 return self.reply(401)
