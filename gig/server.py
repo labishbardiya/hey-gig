@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from gig.calls import Calls
 from gig.library import Library
 from gig.voice import dispatch
-from gig.scan import extract_lines, inspect_page
+from gig.scan import extract_lines, inspect_page, read_qr
 from gig.ocr import MAX_PAGES, searchable_pdf
 
 MAX_FRAME = 2 * 1024 * 1024
@@ -165,6 +165,8 @@ def make_server(host, port, token, library_path=None, voice=None):
                     return self.reply(400, b'Invalid JPEG page.')
                 if self.path == '/scan/inspect':
                     data = inspect_page(jpeg)
+                elif self.path == '/scan/qr':
+                    data = read_qr(jpeg)
                 else:
                     if not ocr_slot.acquire(blocking=False):
                         return self.reply(503, b'Another OCR job is running.')
@@ -277,7 +279,7 @@ def make_server(host, port, token, library_path=None, voice=None):
                 '/routines', '/routines/run', '/privacy', '/assistant/text', '/calls', '/calls/action',
             ):
                 return self.update_workspace()
-            if self.path in ('/scan/inspect', '/scan/extract'):
+            if self.path in ('/scan/inspect', '/scan/extract', '/scan/qr'):
                 return self.analyze_page()
             if self.path == '/scan/pdf':
                 return self.export_pdf()

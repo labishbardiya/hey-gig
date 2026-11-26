@@ -138,6 +138,7 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
 .call-form textarea { font: inherit; color: var(--ink); background: var(--input);
   border: 1px solid var(--muted); border-radius: 8px; padding: 8px 12px; resize: vertical; }
 .call-task { white-space: pre-wrap; }
+#qr-result { display: block; overflow-wrap: anywhere; white-space: pre-wrap; }
 </style>
 <main>
 <header>
@@ -164,10 +165,12 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
 <h2 id="review-title">Pages <span id="page-count">0</span></h2>
 <div class="controls">
   <button id="capture" disabled>Add page</button>
+  <button id="read-qr" disabled>Read QR code</button>
   <label><input id="auto-capture" type="checkbox"> Auto-capture</label>
   <button id="extract" disabled>Extract text</button>
   <button id="export" disabled>Save searchable PDF</button>
 </div>
+<output id="qr-result" role="status"></output>
 <p id="capture-status" role="status"></p>
 <p id="export-status" role="status"></p>
 <ol id="pages" aria-label="Captured document pages"></ol>
@@ -298,6 +301,7 @@ function discardDrafts() {
   for (const image of byId('pages').querySelectorAll('img')) URL.revokeObjectURL(image.src);
   byId('pages').replaceChildren();
   pages.clear();
+  byId('qr-result').textContent = '';
   capturedSignatures.length = 0;
   extractedPages = [];
   byId('extraction-pages').replaceChildren();
@@ -388,7 +392,9 @@ function stop() {
   byId('status').textContent = 'Preview stopped. Stop capture in Mac Terminal.';
 }
 
+let readingQr = false;
 function updateScanActions() {
+  byId('read-qr').disabled = readingQr || privacyPaused || !live.has('reading');
   byId('page-count').textContent = pages.size;
   byId('capture').disabled = !live.has('reading') || pages.size >= pageLimit;
   byId('export').disabled = exporting || pages.size === 0;
@@ -845,6 +851,28 @@ byId('assistant-talk').onclick = () => runAssistant('voice', {});
 byId('connect').onclick = connect;
 byId('stop').onclick = stop;
 byId('capture').onclick = () => addPage();
+byId('read-qr').onclick = async () => {
+  const frame = live.get('reading');
+  if (!frame || readingQr || privacyPaused) return;
+  const epoch = privacyEpoch;
+  readingQr = true;
+  updateScanActions();
+  const output = byId('qr-result');
+  output.textContent = 'Reading QR code…';
+  try {
+    const response = await fetch('/scan/qr', { method: 'POST', body: frame.blob,
+      headers: { Authorization: 'Bearer ' + byId('token').value.trim() } });
+    if (!response.ok) throw new Error(await response.text());
+    const result = await response.json();
+    if (privacyPaused || privacyEpoch !== epoch) return;
+    output.textContent = result.text || (result.detected ? 'QR detected. Hold it steadier and closer.' : 'No QR code found.');
+  } catch (error) {
+    if (privacyEpoch === epoch) output.textContent = error.message;
+  } finally {
+    readingQr = false;
+    updateScanActions();
+  }
+};
 byId('auto-capture').onchange = () => {
   stableCount = 0;
   previousCorners = undefined;

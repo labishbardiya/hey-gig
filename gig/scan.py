@@ -113,3 +113,15 @@ def extract_lines(jpeg):
         lines.setdefault(key, []).append(word)
     return [{'text': ' '.join(word['text'] for word in words), 'words': words}
             for words in lines.values()]
+
+
+def read_qr(jpeg):
+    """Decode one QR code without opening or resolving its contents."""
+    import cv2
+    import numpy as np
+
+    image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise ValueError('Could not decode the camera image.')
+    value, corners, _ = cv2.QRCodeDetector().detectAndDecode(image)
+    return {'text': value[:4096], 'detected': corners is not None}
