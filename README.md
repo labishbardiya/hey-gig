@@ -178,3 +178,27 @@ commands are available from the text field. Try these examples:
 This is an English push-to-talk prototype with keyword-based document
 answers and a small set of local commands. Physical audio device
 availability is checked on each request.
+
+## CALL-E outbound calls
+
+Open **Calls** on the Mac or tablet. Choose **Demo**, supply a recipient
+label and a task, then select **Draft for approval**. Approve the demo in
+Call history and watch it advance through accepted, in progress, and
+completed. The final card includes a sample summary and transcript.
+Denying a draft leaves it unsubmitted. Activity records status changes.
+
+Live mode requires a key from the [CALL-E dashboard](https://dashboard.heycall-e.com/account/api-keys).
+Set `CALLE_API_KEY` in the Mac launcher environment before starting
+`gig.preview` or `gig.server`. Keep the key out of the tablet, chat, and Git.
+Pick **Live CALL-E**, enter one authorized international number, review the
+task and destination, and confirm **Approve and place call**. Calls V2 can
+charge credits. Start with a consenting test recipient.
+
+The Mac submits a single immediate outbound call using an idempotency key
+stored with its approved draft. It polls using the returned CALL-E resource
+ID and resumes polling that ID after a restart. The separate billing ID
+appears when CALL-E reports it. If submission is unconfirmed, check the
+provider dashboard before creating another draft. Pre-dial cancellation is
+best effort and does not hang up an active call. Call instructions, status,
+and returned summaries and transcripts are kept in the existing local
+SQLite library. The feature covers outbound Calls V2.

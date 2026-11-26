@@ -11,6 +11,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from gig.calls import Calls
 from gig.library import Library
 from gig.voice import dispatch
 from gig.scan import extract_lines, inspect_page
@@ -48,6 +49,7 @@ PAGE = Path(__file__).with_name('hud.html').read_bytes()
 
 def make_server(host, port, token, library_path=None, voice=None):
     library = Library(library_path) if library_path else None
+    calls = Calls(library) if library else None
     frames = Frames()
     ocr_slot = threading.Lock()
     voice_slot = threading.Lock()
@@ -74,7 +76,7 @@ def make_server(host, port, token, library_path=None, voice=None):
             if self.path == '/privacy':
                 return self.json_reply({'paused': frames.paused})
             if library and self.path == '/workspace':
-                return self.json_reply({**library.snapshot(), 'privacy': frames.paused})
+                return self.json_reply({**library.snapshot(), 'privacy': frames.paused, 'phone': calls.snapshot()})
             match = re.fullmatch(r'/library/([0-9]{1,18})', self.path)
             if library and match:
                 document_id = int(match[1])
@@ -184,6 +186,10 @@ def make_server(host, port, token, library_path=None, voice=None):
                     if action == 'privacy':
                         frames.set_paused(True)
                     return self.json_reply({'action': action})
+                elif self.path == '/calls':
+                    calls.draft(data)
+                elif self.path == '/calls/action':
+                    calls.act(data)
                 elif self.path == '/assistant/text':
                     command = data.get('command')
                     if not isinstance(command, str) or not 1 <= len(command.strip()) <= 400:
@@ -243,7 +249,7 @@ def make_server(host, port, token, library_path=None, voice=None):
                 return self.voice_reply()
             if library and self.path in (
                 '/approvals', '/approvals/decision', '/reminders', '/reminders/cancel',
-                '/routines', '/routines/run', '/privacy', '/assistant/text',
+                '/routines', '/routines/run', '/privacy', '/assistant/text', '/calls', '/calls/action',
             ):
                 return self.update_workspace()
             if self.path in ('/scan/inspect', '/scan/extract'):
@@ -270,11 +276,21 @@ def make_server(host, port, token, library_path=None, voice=None):
 
     class Server(ThreadingHTTPServer):
         last_reminder_check = 0
+        call_worker = None
+
+        def check_calls(self):
+            try:
+                calls.step()
+            except sqlite3.Error:
+                pass
 
         def service_actions(self):
             now = time.monotonic()
             if library and now - self.last_reminder_check >= 2:
                 self.last_reminder_check = now
+                if self.call_worker is None or not self.call_worker.is_alive():
+                    self.call_worker = threading.Thread(target=self.check_calls, daemon=True)
+                    self.call_worker.start()
                 try:
                     library.deliver_reminders()
                 except sqlite3.Error:

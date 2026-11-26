@@ -133,6 +133,11 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
 .workspace form { margin: 8px 0; max-width: 480px; }
 .workspace select { min-height: 40px; max-width: 100%; }
 @media print { main { display: block; min-height: auto; } .app-nav { display: none; } }
+.call-form { display: grid; gap: 12px; }
+.call-form label { display: grid; gap: 4px; }
+.call-form textarea { font: inherit; color: var(--ink); background: var(--input);
+  border: 1px solid var(--muted); border-radius: 8px; padding: 8px 12px; resize: vertical; }
+.call-task { white-space: pre-wrap; }
 </style>
 <main>
 <header>
@@ -181,7 +186,7 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
   <section data-screen="activity"><h2>Timeline</h2>
     <label>Event type
       <select id="activity-filter"><option value="all">All events</option><option value="documents">Documents</option>
-      <option value="shares">Sharing</option><option value="reminders">Reminders</option><option value="routines">Routines</option></select>
+      <option value="shares">Sharing</option><option value="reminders">Reminders</option><option value="routines">Routines</option><option value="calls">Calls</option></select>
     </label>
     <ul id="activity"></ul>
   </section>
@@ -223,9 +228,29 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     <button id="finish-reminder" type="button" hidden>Choose reminder time</button>
   </section>
 </div>
+<div class="workspace">
+  <section data-screen="calls">
+    <h2>New call</h2>
+    <p id="call-mode-note">Demo calls stay in Hey GIG. Live calls require CALL-E on the Mac.</p>
+    <form id="call-form" class="call-form">
+      <label>Mode <select id="call-mode"><option value="demo">Demo</option>
+        <option value="live" disabled>Live CALL-E</option></select></label>
+      <label>Recipient <input id="call-recipient" maxlength="200" required></label>
+      <label id="call-number-label" hidden>Phone number
+        <input id="call-number" type="tel" placeholder="+ country code and number"
+          pattern="[+][1-9][0-9]{7,14}" maxlength="16"></label>
+      <label>What should CALL-E say or ask?
+        <textarea id="call-task" rows="3" maxlength="1500" required></textarea></label>
+      <button>Draft for approval</button>
+    </form>
+    <h2>Call history</h2>
+    <ul id="calls"></ul>
+  </section>
+</div>
 <nav class="app-nav" aria-label="Hey GIG screens" hidden>
   <button type="button" data-view="scanner">Scanner</button>
   <button type="button" data-view="assistant">Assistant</button>
+  <button type="button" data-view="calls">Calls</button>
   <button type="button" data-view="activity">Activity</button>
   <button type="button" data-view="reminders">Reminders</button>
   <button type="button" data-view="routines">Routines</button>
@@ -556,7 +581,7 @@ function renderActivity() {
   const filter = byId('activity-filter').value;
   const prefixes = {
     documents: /^Saved document /, shares: /^(Share request |Requested approval )/,
-    reminders: /^Reminder /, routines: /^(Routine saved|Ran routine)/
+    reminders: /^Reminder /, routines: /^(Routine saved|Ran routine)/, calls: /^Call /
   };
   let day;
   renderList('activity', activity.filter(entry => filter === 'all' || prefixes[filter].test(entry.message)),
@@ -577,6 +602,76 @@ function renderActivity() {
     }, 'No matching events.');
 }
 byId('activity-filter').onchange = renderActivity;
+
+let lastCalls;
+function updateCallMode() {
+  const live = byId('call-mode').value === 'live';
+  byId('call-number-label').hidden = !live;
+  byId('call-number').required = live;
+}
+byId('call-mode').onchange = updateCallMode;
+byId('call-form').addEventListener('reset', () => setTimeout(updateCallMode, 0));
+formAction('call-form', '/calls', () => ({
+  recipient: byId('call-recipient').value, phone: byId('call-number').value.trim(),
+  task: byId('call-task').value, mode: byId('call-mode').value,
+}));
+
+function renderCalls(state) {
+  const data = JSON.stringify(state);
+  if (lastCalls === data) return;
+  lastCalls = data;
+  byId('call-mode').querySelector('[value="live"]').disabled = !state.live_available;
+  if (!state.live_available) byId('call-mode').value = 'demo';
+  updateCallMode();
+  renderList('calls', state.calls, (row, call) => {
+    const heading = document.createElement('strong');
+    heading.textContent = `${call.recipient} · ${call.mode === 'live' ? call.phone : 'Demo'}`;
+    const append = (text, className = '') => {
+      const element = document.createElement('p');
+      element.className = className;
+      element.textContent = text;
+      row.append(element);
+    };
+    const labels = { draft: 'Awaiting approval', queued: 'Approved and queued',
+      submitting: 'Submitting to provider', unknown: 'Submission unconfirmed' };
+    row.append(heading);
+    append(labels[call.status] || call.status.replaceAll('_', ' '));
+    append(call.task, 'call-task');
+    if (call.outcome) append('Outcome: ' + call.outcome.replaceAll('_', ' '));
+    if (call.result_status === 'pending') append('Waiting for results');
+    if (call.result_status === 'unavailable') append('No structured result was available.');
+    if (call.summary) append(call.summary);
+    if (call.billing_id) append('CALL-E billing ID: ' + call.billing_id);
+    if (call.error) append(call.error);
+    if (call.transcript) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'Transcript';
+      const transcript = document.createElement('p');
+      transcript.className = 'call-task';
+      transcript.textContent = call.transcript;
+      details.append(summary, transcript);
+      row.append(details);
+    }
+    const decide = (label, choice) => action(label, async () => {
+      if (choice === 'approve' && call.mode === 'live' &&
+          !window.confirm(`Place a real CALL-E call to ${call.recipient} at ${call.phone}?\n\n${call.task}`)) return;
+      await workspaceRequest('/calls/action', { id: call.id, action: choice });
+      await refreshWorkspace();
+    });
+    if (call.status === 'draft') {
+      if (call.mode === 'demo' || state.live_available) {
+        row.append(decide(call.mode === 'demo' ? 'Approve demo' : 'Approve and place call', 'approve'));
+      }
+      row.append(decide('Deny', 'deny'));
+    } else if (call.cancel_requested) {
+      append('Cancellation requested');
+    } else if (call.status === 'queued' ||
+               (call.provider_id && call.result_status === 'pending' && ['accepted', 'preparing', 'queued'].includes(call.status))) {
+      row.append(decide('Request cancellation', 'cancel'));
+    }
+  }, 'No calls yet.');
+}
 
 async function refreshWorkspace() {
   try {
@@ -632,6 +727,7 @@ async function refreshWorkspace() {
       }
     }, 'No share drafts yet.');
 
+    renderCalls(state.phone);
     activity = state.activity;
     renderActivity();
     if (!byId('connection').dataset.connected) {
