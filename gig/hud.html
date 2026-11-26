@@ -433,7 +433,11 @@ byId('extract').onclick = async () => {
     }
     panel.hidden = false;
     panel.open = true;
-    status.textContent = 'Extraction complete.';
+    const words = output.flatMap(page => page.lines.flatMap(line => line.words));
+    const uncertain = words.filter(word => word.confidence < 0.65).length;
+    status.textContent = !words.length ? 'No readable text. Try a closer capture.'
+      : uncertain > words.length * 0.15 ? 'Review the text against the image. Several words had low OCR confidence.'
+      : 'Extraction complete.';
   } catch (error) {
     status.textContent = error.message;
   } finally {

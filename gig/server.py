@@ -132,7 +132,8 @@ def make_server(host, port, token, library_path=None):
                     if not ocr_slot.acquire(blocking=False):
                         return self.reply(503, b'Another OCR job is running.')
                     try:
-                        data = {'engine': 'tesseract', 'language': 'eng', 'lines': extract_lines(jpeg)}
+                        data = {'engine': 'tesseract', 'language': 'eng', 'box_space': 'ocr-image-pixels',
+                                'lines': extract_lines(jpeg)}
                     finally:
                         ocr_slot.release()
             except ImportError:

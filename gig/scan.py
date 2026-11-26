@@ -53,10 +53,55 @@ def inspect_page(jpeg):
     return {'status': 'Fit all four page corners inside the frame.'}
 
 
+def prepare_text_image(jpeg):
+    """Deskew camera text by maximizing the separation between text rows."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return jpeg
+
+    gray = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return jpeg
+    height, width = gray.shape
+    edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                  cv2.THRESH_BINARY_INV, 31, 12)
+    # Exclude the frame edges, which often contain the border of a desk or screen.
+    y, x = height // 10, width // 10
+    inner = edges[y:height-y, x:width-x]
+    h, w = inner.shape
+
+    def row_score(angle):
+        matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1)
+        aligned = cv2.warpAffine(inner, matrix, (w, h), flags=cv2.INTER_NEAREST)
+        rows = aligned[h//8:7*h//8, w//8:7*w//8].mean(axis=1)
+        return float(np.var(rows))
+
+    angle = max(range(-12, 13), key=row_score)
+    if abs(angle) == 12 or row_score(angle) < 1.12 * row_score(0):
+        angle = 0
+    transform = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
+    # Expand the canvas so straightening does not clip text at the corners.
+    cosine, sine = abs(transform[0, 0]), abs(transform[0, 1])
+    out_w = int(width * cosine + height * sine + .5)
+    out_h = int(height * cosine + width * sine + .5)
+    transform[0, 2] += (out_w - width) / 2
+    transform[1, 2] += (out_h - height) / 2
+    aligned = cv2.warpAffine(gray, transform, (out_w, out_h), borderValue=255)
+    scale = max(1.0, min(2.5, 1500 / max(aligned.shape)))
+    if scale > 1:
+        aligned = cv2.resize(aligned, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    enhanced = cv2.createCLAHE(clipLimit=2, tileGridSize=(8, 8)).apply(aligned)
+    ok, encoded = cv2.imencode('.png', enhanced)
+    return encoded.tobytes() if ok else jpeg
+
+
 def extract_lines(jpeg):
+    prepared = prepare_text_image(jpeg)
     result = subprocess.run(
-        ['tesseract', 'stdin', 'stdout', '-l', 'eng', '--dpi', '150', '--psm', '3', 'tsv'],
-        input=jpeg, check=True, capture_output=True, timeout=25,
+        ['tesseract', 'stdin', 'stdout', '-l', 'eng', '--dpi', '150', '--psm', '6', 'tsv'],
+        input=prepared, check=True, capture_output=True, timeout=25,
     )
     lines = {}
     for row in csv.DictReader(io.StringIO(result.stdout.decode('utf-8')), delimiter='\t'):

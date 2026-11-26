@@ -127,6 +127,6 @@ use **Add page**. Remove a captured page to allow it to be captured again.
 
 **Extract text** displays recognized English lines in page order. **Save
 extraction JSON** downloads the lines and words, each word's confidence and
-bounding box in page-image pixels. **Save searchable PDF** still exports the
+bounding box in processed OCR image pixels. Text extraction straightens and enhances manual and automatic captures. **Save searchable PDF** still exports the
 reviewed page order. See [extraction trade-offs and Mac results](ARCHITECTURE.md)
 for the comparison with PaddleOCR.
