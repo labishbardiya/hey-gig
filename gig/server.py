@@ -69,6 +69,8 @@ def make_server(host, port, token, library_path=None):
                 return self.reply(200, PAGE, 'text/html; charset=utf-8')
             if not self.authorized():
                 return self.reply(401)
+            if self.path == '/privacy':
+                return self.json_reply({'paused': frames.paused})
             if library and self.path == '/workspace':
                 return self.json_reply({**library.snapshot(), 'privacy': frames.paused})
             match = re.fullmatch(r'/library/([0-9]{1,18})', self.path)

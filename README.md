@@ -148,5 +148,4 @@ and library. For library-only use, start `gig.server --port 18765` with
 
 The companion shows saved documents, share approvals, activity, reminders and
 routines. Reminders become due in the running backend and appear in Activity.
-The preview pause clears the Mac receiver's frames and discards new uploads
-until resumed. The Pi camera process and the earbuds are controlled separately.
+The privacy switch clears the Mac receiver frame cache and releases the Pi camera when using the SSH preview launcher. The software control does not mute unrelated Pi audio.

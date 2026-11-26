@@ -1,6 +1,7 @@
 """Start a private Mac viewer and run the selected camera senders over SSH."""
 import argparse
 import json
+import os
 import re
 import secrets
 import shlex
@@ -15,23 +16,13 @@ from gig.server import library_path, make_server
 # Executed with the Pi's system Python so apt-installed camera libraries are visible.
 # Keep stdin open as a session lease. SSH disconnection closes it on the Pi.
 REMOTE = """
-import json, os, select, signal, subprocess, sys
+import json, os, select, signal, subprocess, sys, urllib.request
 
 payload = json.loads(sys.stdin.buffer.readline())
 env = dict(os.environ, GIG_TOKEN=payload['token'], PYTHONUNBUFFERED='1')
 children = []
-try:
-    for args in payload['senders']:
-        children.append(subprocess.Popen(
-            [sys.executable, '-c', payload['code'], *args],
-            stdin=subprocess.DEVNULL, env=env, start_new_session=True))
-    while True:
-        for child in children:
-            if child.poll() is not None:
-                raise SystemExit(child.returncode or 1)
-        if select.select([sys.stdin], [], [], 0.5)[0] and not os.read(0, 1):
-            break
-finally:
+
+def stop_capture():
     for child in children:
         try:
             os.killpg(child.pid, signal.SIGTERM)
@@ -41,8 +32,39 @@ finally:
         try:
             child.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            child.kill()
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             child.wait()
+    children.clear()
+
+try:
+    while True:
+        if select.select([sys.stdin], [], [], 0.5)[0] and not os.read(0, 1):
+            break
+        paused = False
+        if payload.get('privacy_url'):
+            request = urllib.request.Request(payload['privacy_url'],
+                headers={'Authorization': 'Bearer ' + payload['token']})
+            try:
+                with urllib.request.urlopen(request, timeout=1) as response:
+                    paused = json.load(response)['paused']
+            except (OSError, ValueError, KeyError):
+                paused = True
+        if paused:
+            stop_capture()
+            continue
+        if not children:
+            for args in payload['senders']:
+                children.append(subprocess.Popen(
+                    [sys.executable, '-c', payload['code'], *args],
+                    stdin=subprocess.DEVNULL, env=env, start_new_session=True))
+        for child in children:
+            if child.poll() is not None:
+                raise SystemExit(child.returncode or 1)
+finally:
+    stop_capture()
 """
 
 
@@ -51,6 +73,7 @@ def main():
     parser.add_argument('pi', help='Pi SSH destination, for example gig@gig-pi.local')
     parser.add_argument('--camera', choices=['usb', 'csi', 'both'], default='usb')
     parser.add_argument('--device', default='/dev/video0', help='USB video capture device on the Pi')
+    parser.add_argument('--identity-file', help='SSH private key path')
     parser.add_argument('--port', type=int, default=0, help='Mac viewer port (18765 for the USB tablet companion)')
     parser.add_argument('--remote-port', type=int, default=18880)
     args = parser.parse_args()
@@ -61,7 +84,9 @@ def main():
 
     if not 0 <= args.port <= 65535:
         parser.error('Viewer port must be between 0 and 65535')
-    token = secrets.token_urlsafe(32)
+    token = os.environ.get("GIG_TOKEN") or secrets.token_urlsafe(32)
+    if len(token) < 24:
+        parser.error("GIG_TOKEN must be at least 24 characters")
     viewer = make_server('127.0.0.1', args.port, token, library_path())
     worker = threading.Thread(target=viewer.serve_forever, daemon=True)
     worker.start()
@@ -72,13 +97,17 @@ def main():
     if args.camera in ('csi', 'both'):
         senders.append(['--source', 'csi', '--name', 'scene', '--server', destination])
     code = Path(__file__).with_name('camera.py').read_text()
-    packet = json.dumps({'token': token, 'senders': senders, 'code': code}) + '\n'
+    packet = json.dumps({'token': token, 'senders': senders, 'code': code, 'privacy_url': destination + '/privacy'}) + '\n'
     forward = f'127.0.0.1:{args.remote_port}:127.0.0.1:{viewer.server_port}'
     command = ['ssh', '-T', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=8',
                '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2',
-               '-R', forward, args.pi, shlex.join(['/usr/bin/python3', '-c', REMOTE])]
+               '-R', forward]
+    if args.identity_file:
+        command.extend(['-i', args.identity_file, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes'])
+    command.extend([args.pi, shlex.join(['/usr/bin/python3', '-c', REMOTE])])
     print(f'On this computer open http://127.0.0.1:{viewer.server_port}', flush=True)
-    print(f'Paste this session token into the viewer: {token}', flush=True)
+    if not os.environ.get('GIG_TOKEN'):
+        print(f'Paste this session token into the viewer: {token}', flush=True)
     print('Keep this terminal open. Press Ctrl+C here to stop capture.', flush=True)
     try:
         with subprocess.Popen(command, stdin=subprocess.PIPE, text=True) as link:

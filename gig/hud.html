@@ -121,7 +121,7 @@ button:not(:disabled):not(#connect):not(#export) { background: var(--veil); }
   <label>Access token <input id="token" type="password" autocomplete="off"></label>
   <button id="connect">Connect</button>
   <button id="stop" disabled>Stop preview</button>
-  <button id="privacy" disabled>Pause camera preview</button>
+  <button id="privacy" disabled>Pause camera capture</button>
 </header>
 <div class="intro"><h1>Document scanner</h1><p id="intro-copy">Capture pages and export one searchable PDF.</p></div>
 <p id="status" role="status">Preview disconnected</p>
@@ -166,7 +166,7 @@ button:not(:disabled):not(#connect):not(#export) { background: var(--veil); }
   <section><h2>Routines</h2>
     <form id="routine-form">
       <label>Name <input id="routine-name" required maxlength="200"></label>
-      <label>Action <select id="routine-action"><option value="privacy">Pause camera preview</option><option value="scan">Open scanner</option></select></label>
+      <label>Action <select id="routine-action"><option value="privacy">Pause camera capture</option><option value="scan">Open scanner</option></select></label>
       <button>Save routine</button>
     </form>
     <ul id="routines"></ul>
@@ -473,7 +473,7 @@ async function refreshWorkspace() {
     const state = await response.json();
     privacyPaused = state.privacy;
     byId('privacy').disabled = false;
-    byId('privacy').textContent = privacyPaused ? 'Resume camera preview' : 'Pause camera preview';
+    byId('privacy').textContent = privacyPaused ? 'Resume camera capture' : 'Pause camera capture';
     if (privacyPaused) cameras.forEach(camera => clear(camera, 'Preview paused'));
     renderList('reminders', state.reminders, (row, reminder) => {
       row.textContent = `${reminder.title} · ${new Date(reminder.due).toLocaleString()}`;
