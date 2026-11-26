@@ -15,7 +15,12 @@
   --line: oklch(39% .016 266); --accent: oklch(77% .10 274);
   --on-accent: oklch(19% .035 274); --waiting: oklch(83% .095 62);
   --paper: oklch(95.5% .008 75); --print-ink: oklch(21% .016 268);
-  --glass: oklch(22% .018 268 / .58);
+  --glass: oklch(22% .025 268 / .67);
+  --haze-violet: oklch(46% .115 286 / .53);
+  --haze-peach: oklch(58% .11 51 / .28);
+  --sky: oklch(13% .025 270);
+  --glass-shadow: 0 24px 54px oklch(9% .025 270 / .38);
+  --veil: oklch(97% .012 274 / .09);
   --glass-edge: inset 0 1px 0 oklch(100% 0 0 / .12);
   --body: "Wix Madefor Text", system-ui, sans-serif;
   --display: "Wix Madefor Display", system-ui, sans-serif;
@@ -76,7 +81,32 @@ button:disabled, #connect:disabled, #export:disabled { background: var(--stage);
 .organize { margin-top: 28px; }
 .organize form { display: flex; flex-wrap: wrap; gap: 8px; }
 .organize select { font: inherit; padding: 8px; }
-body.companion .scan-layout, body.companion #stop, body.companion #intro-copy { display: none; }
+body.companion #intro-copy { display: none; }
+body {
+  background:
+    radial-gradient(ellipse at 12% 0%, var(--haze-violet), transparent 46%),
+    radial-gradient(ellipse at 96% 24%, var(--haze-peach), transparent 38%),
+    var(--sky);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+header, .scan-review, .workspace section {
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--glass-edge);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  backdrop-filter: blur(24px) saturate(1.2);
+  padding: 20px;
+}
+header { margin-top: 20px; }
+.lens { box-shadow: var(--glass-shadow); }
+button:not(:disabled):not(#connect):not(#export) { background: var(--veil); }
+.lens figcaption { background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+@media print {
+  body { background: var(--paper); }
+  .scan-review { padding: 0; border: 0; background: none; box-shadow: none; }
+}
 </style>
 <main>
 <header>
@@ -212,7 +242,6 @@ async function connect() {
   refreshWorkspace();
   clearInterval(workspaceRefresh);
   workspaceRefresh = setInterval(refreshWorkspace, 4000);
-  if (companion) return;
   while (!signal.aborted) {
     await Promise.all(cameras.map(camera => update(camera, signal, headers)));
     await new Promise(resolve => setTimeout(resolve, 200));
