@@ -184,8 +184,26 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
 </div>
 <p id="workspace-status" role="status"></p>
 <div class="workspace">
-  <section data-screen="library"><h2>Library</h2><ul id="library"></ul></section>
-  <section data-screen="approvals"><h2>Approvals</h2><ul id="approvals"></ul></section>
+  <section data-screen="library"><h2>Library</h2><ul id="library"></ul>
+    <details id="delivery-editor">
+      <summary>Upload or share a scan</summary>
+      <form id="delivery-form" class="call-form">
+        <label>Scan <select id="delivery-document" required></select></label>
+        <label>Destination <select id="delivery-channel">
+          <option value="drive">Google Drive</option>
+          <option value="telegram">Telegram PDF</option>
+          <option value="whatsapp">WhatsApp Drive link</option>
+        </select></label>
+        <label id="delivery-recipient-label" hidden><span id="delivery-recipient-name">Recipient</span>
+          <input id="delivery-recipient" maxlength="200"></label>
+        <p id="delivery-hint"></p>
+        <button>Draft for approval</button>
+      </form>
+    </details>
+  </section>
+  <section data-screen="approvals"><h2>Deliveries</h2><ul id="deliveries"></ul>
+    <details><summary>Earlier share drafts</summary><ul id="approvals"></ul></details>
+  </section>
   <section data-screen="activity"><h2>Timeline</h2>
     <label>Event type
       <select id="activity-filter"><option value="all">All events</option><option value="documents">Documents</option>
@@ -285,11 +303,29 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     <a id="research-source" hidden target="_blank" rel="noopener noreferrer"></a>
   </section>
 </div>
+<div class="workspace">
+  <section data-screen="maps">
+    <h2>Plan directions</h2>
+    <form id="maps-form" class="call-form">
+      <label>From <input id="maps-origin" required maxlength="200"></label>
+      <label>To <input id="maps-destination" required maxlength="200"></label>
+      <label>Travel mode <select id="maps-mode">
+        <option value="walking">Walk</option><option value="driving">Drive</option>
+        <option value="bicycling">Cycle</option><option value="transit">Public transit</option>
+      </select></label>
+      <label><span><input id="maps-estimate" type="checkbox"> Request distance and time with Routes API</span></label>
+      <button>Prepare directions</button>
+    </form>
+    <p id="maps-result" role="status"></p>
+    <a id="maps-link" hidden rel="noopener noreferrer">Open in Google Maps</a>
+  </section>
+</div>
 <nav class="app-nav" aria-label="Hey GIG screens" hidden>
   <button type="button" data-view="scanner">Scanner</button>
   <button type="button" data-view="assistant">Assistant</button>
   <button type="button" data-view="translation">Translate</button>
   <button type="button" data-view="tools">Tools</button>
+  <button type="button" data-view="maps">Maps</button>
   <button type="button" data-view="calls">Calls</button>
   <button type="button" data-view="activity">Activity</button>
   <button type="button" data-view="reminders">Reminders</button>
@@ -602,7 +638,7 @@ function renderList(id, entries, render, empty) {
   }
 }
 
-function formAction(id, path, payload) {
+function formAction(id, path, payload, onSuccess) {
   const form = byId(id);
   form.onsubmit = async event => {
     event.preventDefault();
@@ -611,6 +647,7 @@ function formAction(id, path, payload) {
     try {
       await workspaceRequest(path, payload());
       form.reset();
+      if (onSuccess) onSuccess();
       await refreshWorkspace();
     } catch (error) {
       byId('workspace-status').textContent = error.message;
@@ -661,7 +698,7 @@ byId('privacy').onclick = async () => {
 function renderActivity() {
   const filter = byId('activity-filter').value;
   const prefixes = {
-    privacy: /^Privacy:/, documents: /^Saved document /, shares: /^(Share request |Requested approval )/,
+    privacy: /^Privacy:/, documents: /^Saved document /, shares: /^(Share request |Requested approval |Delivery )/,
     reminders: /^Reminder /, routines: /^(Routine saved|Ran routine)/, calls: /^Call /
   };
   let day;
@@ -754,6 +791,72 @@ function renderCalls(state) {
   }, 'No calls yet.');
 }
 
+function updateDeliveryChannel() {
+  const channel = byId('delivery-channel').value;
+  byId('delivery-recipient-label').hidden = channel === 'drive';
+  byId('delivery-recipient').required = channel !== 'drive';
+  byId('delivery-recipient-name').textContent = channel === 'telegram' ? 'Telegram chat ID or channel' : 'WhatsApp number with country code';
+  byId('delivery-hint').textContent = {
+    drive: 'Uploads to the configured Drive account with its current access permissions.',
+    telegram: 'Sends the PDF to a chat that has granted the bot access.',
+    whatsapp: 'Prepares a Drive link in WhatsApp. You review and send it there.',
+  }[channel];
+}
+byId('delivery-channel').onchange = updateDeliveryChannel;
+byId('delivery-form').addEventListener('reset', () => setTimeout(updateDeliveryChannel, 0));
+updateDeliveryChannel();
+formAction('delivery-form', '/delivery', () => ({
+  document: Number(byId('delivery-document').value), channel: byId('delivery-channel').value,
+  recipient: byId('delivery-recipient').value,
+}), () => showScreen('approvals'));
+let documentChoices;
+let previousDeliveries;
+function renderDeliveries(state) {
+  const choices = JSON.stringify(state.documents);
+  if (choices !== documentChoices) {
+    documentChoices = choices;
+    const select = byId('delivery-document');
+    const selected = select.value;
+    select.replaceChildren(...state.documents.map(doc => new Option('Scan ' + doc.id, doc.id)));
+    if (state.documents.some(doc => String(doc.id) === selected)) select.value = selected;
+  }
+  const fingerprint = JSON.stringify(state.deliveries);
+  if (fingerprint === previousDeliveries) return;
+  previousDeliveries = fingerprint;
+  renderList('deliveries', state.deliveries, (row, delivery) => {
+    const channels = { drive: 'Drive', telegram: 'Telegram', whatsapp: 'WhatsApp' };
+    const statuses = { pending: 'Awaiting approval', queued: 'Approved and queued',
+      sending: 'Sending', delivered: 'Delivered', denied: 'Denied',
+      handoff: 'Ready for review in WhatsApp', failed: 'Failed', unknown: 'Delivery unconfirmed' };
+    row.textContent = `Scan ${delivery.document_id} · ${channels[delivery.channel]} · ${delivery.recipient} · ${statuses[delivery.state]}`;
+    if (delivery.state === 'pending') {
+      if (delivery.source_link) {
+        const source = document.createElement('p');
+        source.textContent = delivery.source_link;
+        row.append(source);
+      }
+      for (const [label, decision] of [['Approve', 'approve'], ['Deny', 'deny']]) {
+        row.append(action(label, async () => {
+          await workspaceRequest('/delivery/decision', { id: delivery.id, decision });
+          await refreshWorkspace();
+        }));
+      }
+    }
+    if (delivery.state === 'handoff' || (delivery.channel === 'drive' && delivery.state === 'delivered')) {
+      const link = document.createElement('a');
+      link.href = delivery.result;
+      link.rel = 'noopener noreferrer';
+      link.textContent = delivery.state === 'handoff' ? 'Review in WhatsApp' : 'Open Drive PDF';
+      row.append(document.createElement('br'), link);
+    } else if (delivery.result) {
+      const details = document.createElement('p');
+      details.textContent = delivery.channel === 'telegram' && delivery.state === 'delivered'
+        ? 'Telegram message ID: ' + delivery.result : delivery.result;
+      row.append(details);
+    }
+  }, 'No delivery drafts yet.');
+}
+
 async function refreshWorkspace() {
   try {
     const response = await workspaceRequest('/workspace');
@@ -814,6 +917,7 @@ async function refreshWorkspace() {
     }, 'No share drafts yet.');
 
     renderCalls(state.phone);
+    renderDeliveries(state);
     activity = state.activity;
     renderActivity();
     if (!byId('connection').dataset.connected) {
@@ -899,7 +1003,7 @@ function toolForm(name, payload, render) {
     try {
       const data = await (await workspaceRequest('/tools/' + name, payload())).json();
       if (name === 'vision' && (privacyPaused || privacyEpoch !== epoch)) return;
-      result.textContent = data.answer;
+      result.textContent = data.answer || '';
       if (render) render(data);
     } catch (error) {
       result.textContent = error.message;
@@ -918,6 +1022,19 @@ toolForm('research', () => {
   link.href = source.url;
   link.textContent = source.title || source.url;
   link.hidden = false;
+});
+
+toolForm('maps', () => {
+  byId('maps-link').hidden = true;
+  return { origin: byId('maps-origin').value, destination: byId('maps-destination').value,
+    mode: byId('maps-mode').value, estimate: byId('maps-estimate').checked };
+}, data => {
+  const link = byId('maps-link');
+  link.href = data.url;
+  link.hidden = false;
+  byId('maps-result').textContent = data.distance_meters == null
+    ? 'Directions link ready.' + (data.estimate_message ? ' ' + data.estimate_message : '')
+    : `${(data.distance_meters / 1000).toFixed(1)} km · about ${Math.ceil(data.duration_seconds / 60)} min`;
 });
 
 let translating = false;

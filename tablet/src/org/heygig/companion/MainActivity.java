@@ -2,6 +2,8 @@ package org.heygig.companion;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
@@ -11,6 +13,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 import java.io.ByteArrayInputStream;
 import org.json.JSONObject;
 
@@ -24,6 +27,16 @@ public final class MainActivity extends Activity {
         return "http".equals(origin.getScheme())
             && "127.0.0.1".equals(origin.getHost())
             && origin.getPort() == 18765;
+    }
+
+    private static boolean isExternalHandoff(Uri uri) {
+        if (!"https".equals(uri.getScheme()) || uri.getPort() != -1 || uri.getUserInfo() != null) return false;
+        String host = uri.getHost();
+        String path = uri.getPath();
+        if (path == null) return false;
+        return ("wa.me".equals(host) && path.matches("/[1-9][0-9]{7,14}"))
+            || ("www.google.com".equals(host) && "/maps/dir/".equals(path))
+            || ("drive.google.com".equals(host) && path.startsWith("/file/d/"));
     }
 
     private void handleMicrophoneRequest(PermissionRequest request) {
@@ -78,7 +91,16 @@ public final class MainActivity extends Activity {
         view.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView web, WebResourceRequest request) {
-                return !request.getUrl().toString().startsWith(ORIGIN + "/");
+                Uri uri = request.getUrl();
+                if (isCompanionOrigin(uri)) return false;
+                if (request.isForMainFrame() && request.hasGesture() && isExternalHandoff(uri)) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE));
+                    } catch (ActivityNotFoundException exception) {
+                        Toast.makeText(MainActivity.this, "No app can open this link.", Toast.LENGTH_LONG).show();
+                    }
+                }
+                return true;
             }
 
             @Override

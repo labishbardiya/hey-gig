@@ -13,6 +13,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from gig.calls import Calls
+from gig.delivery import Deliveries
+from gig.maps import MapsUnavailable, directions
 from gig.library import Library
 from gig.voice import dispatch
 from gig.translation import translate_turn
@@ -65,6 +67,7 @@ PAGE = Path(__file__).with_name('hud.html').read_bytes()
 def make_server(host, port, token, library_path=None, voice=None):
     library = Library(library_path) if library_path else None
     calls = Calls(library) if library else None
+    deliveries = Deliveries(library) if library else None
     frames = Frames(library)
     ocr_slot = threading.Lock()
     voice_slot = threading.Lock()
@@ -92,7 +95,7 @@ def make_server(host, port, token, library_path=None, voice=None):
             if self.path == '/privacy':
                 return self.json_reply(frames.privacy())
             if library and self.path == '/workspace':
-                return self.json_reply({**library.snapshot(), 'privacy': frames.privacy(), 'phone': calls.snapshot()})
+                return self.json_reply({**library.snapshot(), 'privacy': frames.privacy(), 'phone': calls.snapshot(), 'deliveries': deliveries.snapshot()})
             match = re.fullmatch(r'/library/([0-9]{1,18})', self.path)
             if library and match:
                 document_id = int(match[1])
@@ -203,6 +206,10 @@ def make_server(host, port, token, library_path=None, voice=None):
                     library.request_share(data.get('document'), data.get('recipient'))
                 elif self.path == '/approvals/decision':
                     library.decide(data.get('id'), data.get('decision'))
+                elif self.path == '/delivery':
+                    deliveries.draft(data)
+                elif self.path == '/delivery/decision':
+                    deliveries.decide(data)
                 elif self.path == '/reminders':
                     library.add_reminder(data.get('title'), data.get('due'), data.get('id'))
                 elif self.path == '/reminders/cancel':
@@ -316,6 +323,12 @@ def make_server(host, port, token, library_path=None, voice=None):
                 data = json.loads(self.rfile.read(length))
                 if not isinstance(data, dict):
                     raise ValueError('Expected a question object.')
+                if self.path == '/tools/maps':
+                    estimate = data.get('estimate', False)
+                    if type(estimate) is not bool:
+                        raise ValueError('Choose whether to request an estimate.')
+                    return self.json_reply(directions(data.get('origin'), data.get('destination'),
+                        data.get('mode', 'driving'), estimate=estimate))
                 if self.path == '/tools/research':
                     result = read_public_source(data.get('url'), data.get('question', ''))
                     return self.json_reply(result)
@@ -331,7 +344,7 @@ def make_server(host, port, token, library_path=None, voice=None):
                 return self.json_reply({'answer': answer})
             except ValueError as error:
                 return self.reply(422, str(error).encode())
-            except VisionUnavailable as error:
+            except (VisionUnavailable, MapsUnavailable) as error:
                 return self.reply(503, str(error).encode())
             except TimeoutError:
                 return self.reply(408, b'Request timed out.')
@@ -341,7 +354,7 @@ def make_server(host, port, token, library_path=None, voice=None):
         def do_POST(self):
             if not self.authorized():
                 return self.reply(401)
-            if self.path in ('/tools/research', '/tools/vision'):
+            if self.path in ('/tools/research', '/tools/vision', '/tools/maps'):
                 return self.tools_reply()
             if self.path in ('/translation/buds', '/translation/tablet'):
                 return self.translation_reply()
@@ -350,6 +363,7 @@ def make_server(host, port, token, library_path=None, voice=None):
             if library and self.path in (
                 '/approvals', '/approvals/decision', '/reminders', '/reminders/cancel',
                 '/routines', '/routines/run', '/privacy', '/assistant/text', '/calls', '/calls/action',
+                '/delivery', '/delivery/decision',
             ):
                 return self.update_workspace()
             if self.path in ('/scan/inspect', '/scan/extract', '/scan/qr'):
@@ -377,6 +391,13 @@ def make_server(host, port, token, library_path=None, voice=None):
     class Server(ThreadingHTTPServer):
         last_reminder_check = 0
         call_worker = None
+        delivery_worker = None
+
+        def check_deliveries(self):
+            try:
+                deliveries.step()
+            except sqlite3.Error:
+                pass
 
         def check_calls(self):
             try:
@@ -391,6 +412,9 @@ def make_server(host, port, token, library_path=None, voice=None):
                 if self.call_worker is None or not self.call_worker.is_alive():
                     self.call_worker = threading.Thread(target=self.check_calls, daemon=True)
                     self.call_worker.start()
+                if self.delivery_worker is None or not self.delivery_worker.is_alive():
+                    self.delivery_worker = threading.Thread(target=self.check_deliveries, daemon=True)
+                    self.delivery_worker.start()
                 try:
                     library.deliver_reminders()
                 except sqlite3.Error:

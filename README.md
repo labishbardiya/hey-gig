@@ -250,3 +250,29 @@ vision-capable llama.cpp server listens at port 18768. The tested setup
 uses SmolVLM2‑500M Q8 and its matching multimodal projector. **Read a public
 source** uses the installed God Scrape runtime and returns matching
 excerpts from the supplied public HTML URL, with the source attached.
+
+## Drive, messaging, and Maps
+
+In **Library → Upload or share a scan**, pick a saved scan and destination,
+then review the destination under **Approvals**. Drive and Telegram submit
+once after approval. An unconfirmed submission requires checking the provider
+before creating another draft.
+
+- **Google Drive** uses an OAuth access token with the
+  `https://www.googleapis.com/auth/drive.file` scope. Set
+  `GIG_GOOGLE_DRIVE_TOKEN` or save it to
+  `~/.local/share/hey-gig/google-drive-token` with mode 600. Enable the Drive
+  API for the OAuth project. Replace the access token when it expires.
+- **Telegram** uses `GIG_TELEGRAM_BOT_TOKEN` or the owner-only
+  `~/.local/share/hey-gig/telegram-bot-token` file. Use a chat ID for a chat
+  that has started the bot or a channel where the bot can post. The PDF
+  goes directly to that chat after approval.
+- **WhatsApp** requires a successful Drive upload for the same scan. Review
+  the international number and link under Approvals, then open WhatsApp
+  and send from there. The recipient needs access to the Drive file.
+
+**Maps** creates a Google Maps directions link from the two places and travel
+mode you enter. Link creation needs no key. For optional in-app distance and
+duration estimates, enable Google Routes and set `GIG_GOOGLE_MAPS_KEY` on the
+Mac before launching the backend. Tablet companion v0.3 opens approved
+WhatsApp and Drive links and user-selected Maps links in an external app.
