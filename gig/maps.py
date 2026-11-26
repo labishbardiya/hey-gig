@@ -5,6 +5,8 @@ import os
 import re
 from urllib.parse import urlencode
 
+from gig.provider_setup import read_private_value
+
 MAPS_URL = 'https://www.google.com/maps/dir/?'
 ROUTES_HOST = 'routes.googleapis.com'
 ROUTES_PATH = '/directions/v2:computeRoutes'
@@ -84,7 +86,7 @@ def directions(origin, destination, mode='driving', *, estimate=False):
               'estimate_status': 'not_requested'}
     if not estimate:
         return result
-    key = os.environ.get('GIG_GOOGLE_MAPS_KEY', '').strip()
+    key = os.environ.get('GIG_GOOGLE_MAPS_KEY', '').strip() or read_private_value('google-routes-key')
     if not key:
         result.update(estimate_status='unconfigured', estimate_message='Google Routes is not configured on the Mac.')
         return result

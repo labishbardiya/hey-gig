@@ -276,3 +276,42 @@ mode you enter. Link creation needs no key. For optional in-app distance and
 duration estimates, enable Google Routes and set `GIG_GOOGLE_MAPS_KEY` on the
 Mac before launching the backend. Tablet companion v0.3 opens approved
 WhatsApp and Drive links and user-selected Maps links in an external app.
+
+### Set up live provider credentials
+
+From the repository on the Mac, run the matching command below and paste the
+value into its hidden Terminal prompt. Keep credentials out of chat and Git.
+
+```sh
+python3 -m gig.provider_setup save drive
+python3 -m gig.provider_setup save telegram
+python3 -m gig.provider_setup save routes
+```
+
+**Drive.** In Google Cloud, enable the Google Drive API. Set up the OAuth
+app's Branding and Audience. For an External app in Testing, add your Google
+account as a test user. Under Clients create a Web application with authorized
+redirect URI `https://developers.google.com/oauthplayground`. In the
+[OAuth Playground](https://developers.google.com/oauthplayground/), open the
+gear, enable **Use your own OAuth credentials**, and enter that client ID and
+secret. Enter `https://www.googleapis.com/auth/drive.file` in Step 1 and
+authorize. In Step 2 exchange the authorization code and save the **access
+token** with the command above. Refresh it in the Playground and save the
+replacement when it expires. Hey GIG does not use the client secret or refresh token.
+
+**Telegram.** Open [@BotFather](https://t.me/BotFather), send `/newbot`,
+and save the resulting token. Open the new bot from the intended private test
+account, tap **Start**, and send a short message. Run:
+
+```sh
+python3 -m gig.provider_setup telegram-chats
+```
+
+Use the numeric ID beside the private test chat. Prefer a dedicated test bot
+with no webhook so the command can read its recent updates.
+
+**Routes.** Enable Routes API in a Cloud project with billing enabled. Under
+APIs & Services → Credentials, create an API key and choose **Restrict key →
+Routes API**. If this Mac has a stable public egress IP, also apply that
+server IP restriction. Save the key with the Routes command. In the app, use
+**Maps → Request distance and time with Routes API** to request an estimate.
