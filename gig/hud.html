@@ -150,7 +150,7 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     </div>
   </details>
   <button id="stop" disabled>Stop preview</button>
-  <button id="privacy" disabled>Pause camera capture</button>
+  <button id="privacy" disabled>Pause camera and mic</button>
 </header>
 <div class="intro"><h1>Document scanner</h1><p id="intro-copy">Capture pages and export one searchable PDF.</p></div>
 <div data-screen="scanner">
@@ -186,7 +186,7 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
   <section data-screen="activity"><h2>Timeline</h2>
     <label>Event type
       <select id="activity-filter"><option value="all">All events</option><option value="documents">Documents</option>
-      <option value="shares">Sharing</option><option value="reminders">Reminders</option><option value="routines">Routines</option><option value="calls">Calls</option></select>
+      <option value="shares">Sharing</option><option value="reminders">Reminders</option><option value="routines">Routines</option><option value="calls">Calls</option><option value="privacy">Privacy</option></select>
     </label>
     <ul id="activity"></ul>
   </section>
@@ -206,7 +206,7 @@ main > .workspace, body.companion main > .workspace { grid-template-columns: min
     <details><summary>New routine</summary>
     <form id="routine-form">
       <label>Name <input id="routine-name" required maxlength="200"></label>
-      <label>Action <select id="routine-action"><option value="privacy">Pause camera capture</option><option value="scan">Open scanner</option></select></label>
+      <label>Action <select id="routine-action"><option value="privacy">Pause camera and mic</option><option value="scan">Open scanner</option></select></label>
       <button>Save routine</button>
     </form>
     </details>
@@ -292,6 +292,19 @@ showScreen('scanner', false);
 
 const cameras = ['scene', 'reading'];
 let privacyPaused = false;
+let privacyEpoch;
+function discardDrafts() {
+  for (const image of byId('pages').querySelectorAll('img')) URL.revokeObjectURL(image.src);
+  byId('pages').replaceChildren();
+  pages.clear();
+  capturedSignatures.length = 0;
+  extractedPages = [];
+  byId('extraction-pages').replaceChildren();
+  byId('extraction').hidden = true;
+  byId('assistant-transcript').textContent = '';
+  byId('assistant-answer').textContent = '';
+  updateScanActions();
+}
 let workspaceRefresh;
 const live = new Map();
 const pages = new Map();
@@ -428,7 +441,7 @@ async function autoCapture(blob, signal, headers) {
 }
 
 function addPage(blob = live.get('reading')?.blob, signature) {
-  if (!blob || pages.size >= pageLimit) return;
+  if (privacyPaused || !blob || pages.size >= pageLimit) return;
   const url = URL.createObjectURL(blob);
   if (signature) capturedSignatures.push(signature);
   const row = document.createElement('li');
@@ -460,6 +473,7 @@ function addPage(blob = live.get('reading')?.blob, signature) {
 async function exportPdf() {
   if (exporting || !pages.size) return;
   exporting = true;
+  const epoch = privacyEpoch;
   updateScanActions();
   const status = byId('export-status');
   status.textContent = 'Recognizing text…';
@@ -479,7 +493,9 @@ async function exportPdf() {
     if (!response.ok) {
       throw new Error(response.status === 401 ? 'Enter the access token for this session.' : await response.text());
     }
-    downloadFile(await response.blob(), 'hey-gig-searchable.pdf');
+    const pdf = await response.blob();
+    if (privacyPaused || privacyEpoch !== epoch) return;
+    downloadFile(pdf, 'hey-gig-searchable.pdf');
     status.textContent = 'Searchable PDF ready. Check your browser downloads.';
     refreshWorkspace();
   } catch (error) {
@@ -580,7 +596,7 @@ byId('privacy').onclick = async () => {
 function renderActivity() {
   const filter = byId('activity-filter').value;
   const prefixes = {
-    documents: /^Saved document /, shares: /^(Share request |Requested approval )/,
+    privacy: /^Privacy:/, documents: /^Saved document /, shares: /^(Share request |Requested approval )/,
     reminders: /^Reminder /, routines: /^(Routine saved|Ran routine)/, calls: /^Call /
   };
   let day;
@@ -677,10 +693,13 @@ async function refreshWorkspace() {
   try {
     const response = await workspaceRequest('/workspace');
     const state = await response.json();
-    privacyPaused = state.privacy;
+    const changed = privacyEpoch !== undefined && privacyEpoch !== state.privacy.epoch;
+    privacyEpoch = state.privacy.epoch;
+    privacyPaused = state.privacy.paused;
+    if (changed || (privacyPaused && pages.size)) discardDrafts();
     byId('privacy').disabled = false;
     byId('assistant-talk').disabled = privacyPaused || assistantBusy;
-    byId('privacy').textContent = privacyPaused ? 'Resume camera capture' : 'Pause camera capture';
+    byId('privacy').textContent = privacyPaused ? 'Resume camera and mic' : 'Pause camera and mic';
     if (privacyPaused) cameras.forEach(camera => clear(camera, 'Preview paused'));
     renderList('reminders', state.reminders, (row, reminder) => {
       row.textContent = `${reminder.title} · ${new Date(reminder.due).toLocaleString()}`;
@@ -743,6 +762,7 @@ async function refreshWorkspace() {
 async function runAssistant(mode, data) {
   if (assistantBusy) return;
   assistantBusy = true;
+  const epoch = privacyEpoch;
   byId('assistant-send').disabled = byId('assistant-talk').disabled = true;
   const answer = byId('assistant-answer');
   const followup = byId('finish-reminder');
@@ -753,6 +773,7 @@ async function runAssistant(mode, data) {
   answer.textContent = mode === 'voice' ? 'Speak now. Recording for five seconds…' : 'Looking up your request…';
   try {
     const result = await (await workspaceRequest('/assistant/' + mode, data)).json();
+    if (mode === 'voice' && (privacyPaused || privacyEpoch !== epoch)) return;
     if (result.transcript) byId('assistant-transcript').textContent = result.transcript;
     answer.textContent = [result.answer, result.audio_warning].filter(Boolean).join(' ');
     if (result.page) {
@@ -801,6 +822,7 @@ byId('auto-capture').onchange = () => {
 byId('extract').onclick = async () => {
   if (extracting) return;
   extracting = true;
+  const epoch = privacyEpoch;
   updateScanActions();
   const status = byId('export-status');
   const input = Array.from(byId('pages').children, row => pages.get(row));
@@ -813,6 +835,7 @@ byId('extract').onclick = async () => {
       if (!response.ok) throw new Error((await response.text()) || 'Extraction failed.');
       output.push({ page: index + 1, ...await response.json() });
     }
+    if (privacyPaused || privacyEpoch !== epoch) return;
     extractedPages = output;
     const panel = byId('extraction');
     const content = byId('extraction-pages');

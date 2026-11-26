@@ -202,3 +202,12 @@ provider dashboard before creating another draft. Pre-dial cancellation is
 best effort and does not hang up an active call. Call instructions, status,
 and returned summaries and transcripts are kept in the existing local
 SQLite library. The feature covers outbound Calls V2.
+
+## Software privacy
+
+**Pause camera and mic** stops the Pi camera and ends Hey GIG audio sessions
+that overlap the pause. The receiver discards buffered frames and the HUD
+clears its unsaved scan pages when it sees the privacy change. The paused
+state persists across Mac backend restarts. Saved library documents and call
+history remain available. Voice and camera resume after the user selects
+**Resume camera and mic**. The control operates Hey GIG's capture processes.

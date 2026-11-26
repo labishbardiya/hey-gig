@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS settings (
+    name TEXT PRIMARY KEY, value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY, pages INTEGER NOT NULL, pdf BLOB NOT NULL,
     created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -143,3 +146,15 @@ class Library:
                 raise ValueError('Routine does not exist.')
             self.event(db, f'Ran routine: {row["name"]}')
             return row['action']
+
+    def privacy_paused(self):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE name='privacy'").fetchone()
+            return bool(row and row['value'] == 'paused')
+
+    def save_privacy(self, paused):
+        with self.connect() as db:
+            db.execute("INSERT INTO settings VALUES ('privacy', ?) "
+                       "ON CONFLICT(name) DO UPDATE SET value=excluded.value",
+                       ('paused' if paused else 'enabled',))
+            self.event(db, 'Privacy: capture paused' if paused else 'Privacy: capture resumed')

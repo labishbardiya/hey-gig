@@ -14,12 +14,13 @@ from pathlib import Path
 
 REMOTE_AUDIO = """
 import json, os, subprocess, sys, tempfile, time, urllib.request
-mode, endpoint = sys.argv[1:]
+mode, endpoint, epoch = sys.argv[1:]
 token = sys.stdin.buffer.readline().decode().strip()
 request = urllib.request.Request(endpoint, headers={'Authorization': 'Bearer ' + token})
 def allowed():
     with urllib.request.urlopen(request, timeout=1) as response:
-        return not json.load(response)['paused']
+        state = json.load(response)
+        return not state['paused'] and state['epoch'] == epoch
 nodes = json.loads(subprocess.check_output(['pw-dump'], timeout=4))
 wanted = 'Audio/Source' if mode == 'record' else 'Audio/Sink'
 for node in nodes:
@@ -76,9 +77,9 @@ class PiVoice:
         self.model = Path(os.environ.get('GIG_WHISPER_MODEL') or
                           Path.home() / '.local/share/hey-gig/models/ggml-base.en.bin').expanduser()
 
-    def remote(self, mode, audio=b''):
+    def remote(self, mode, epoch, audio=b''):
         result = subprocess.run(
-            self.command + [shlex.join(['/usr/bin/python3', '-c', REMOTE_AUDIO, mode, self.endpoint])],
+            self.command + [shlex.join(['/usr/bin/python3', '-c', REMOTE_AUDIO, mode, self.endpoint, epoch])],
             input=self.token.encode() + b'\n' + audio, capture_output=True, timeout=38,
         )
         if result.returncode:
@@ -86,10 +87,10 @@ class PiVoice:
             raise ValueError(reason[-1] if reason else 'Pi audio session failed.')
         return result.stdout
 
-    def listen(self):
+    def listen(self, epoch):
         if not self.model.is_file():
             raise ValueError('The local Whisper model is missing on the Mac.')
-        audio = self.remote('record')
+        audio = self.remote('record', epoch)
         with tempfile.TemporaryDirectory() as directory:
             wav = Path(directory) / 'voice.wav'
             wav.write_bytes(audio)
@@ -102,7 +103,7 @@ class PiVoice:
                            check=True, capture_output=True, timeout=45)
             return output.read_text().strip()
 
-    def speak(self, text):
+    def speak(self, text, epoch):
         if sys.platform != 'darwin':
             raise ValueError('Spoken replies currently require the Mac backend.')
         with tempfile.TemporaryDirectory() as directory:
@@ -110,7 +111,7 @@ class PiVoice:
             subprocess.run(['say', '-o', str(wav), '--file-format=WAVE',
                             '--data-format=LEI16@16000', '--', text[:450]],
                            check=True, capture_output=True, timeout=15)
-            self.remote('play', wav.read_bytes())
+            self.remote('play', epoch, wav.read_bytes())
 
 
 def answer_document(pdf, question):

@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from gig.calls import Calls
@@ -21,10 +22,12 @@ MAX_FRAME = 2 * 1024 * 1024
 
 
 class Frames:
-    def __init__(self):
+    def __init__(self, library=None):
+        self.library = library
         self.lock = threading.Lock()
         self.data = {}
-        self.paused = False
+        self.paused = library.privacy_paused() if library else False
+        self.epoch = uuid.uuid4().hex
 
     def put(self, camera, jpeg):
         with self.lock:
@@ -35,8 +38,17 @@ class Frames:
 
     def set_paused(self, paused):
         with self.lock:
+            if self.paused == paused:
+                return
+            if self.library:
+                self.library.save_privacy(paused)
             self.paused = paused
+            self.epoch = uuid.uuid4().hex
             self.data.clear()
+
+    def privacy(self):
+        with self.lock:
+            return {'paused': self.paused, 'epoch': self.epoch}
 
     def get(self, camera):
         with self.lock:
@@ -50,7 +62,7 @@ PAGE = Path(__file__).with_name('hud.html').read_bytes()
 def make_server(host, port, token, library_path=None, voice=None):
     library = Library(library_path) if library_path else None
     calls = Calls(library) if library else None
-    frames = Frames()
+    frames = Frames(library)
     ocr_slot = threading.Lock()
     voice_slot = threading.Lock()
 
@@ -74,9 +86,9 @@ def make_server(host, port, token, library_path=None, voice=None):
             if not self.authorized():
                 return self.reply(401)
             if self.path == '/privacy':
-                return self.json_reply({'paused': frames.paused})
+                return self.json_reply(frames.privacy())
             if library and self.path == '/workspace':
-                return self.json_reply({**library.snapshot(), 'privacy': frames.paused, 'phone': calls.snapshot()})
+                return self.json_reply({**library.snapshot(), 'privacy': frames.privacy(), 'phone': calls.snapshot()})
             match = re.fullmatch(r'/library/([0-9]{1,18})', self.path)
             if library and match:
                 document_id = int(match[1])
@@ -92,6 +104,9 @@ def make_server(host, port, token, library_path=None, voice=None):
             self.reply(200 if jpeg else 404, jpeg or b'', 'image/jpeg')
 
         def export_pdf(self):
+            privacy = frames.privacy()
+            if privacy['paused']:
+                return self.reply(423, b'Scanning paused by privacy control.')
             try:
                 size = int(self.headers.get('Content-Length', '0'))
             except ValueError:
@@ -123,6 +138,8 @@ def make_server(host, port, token, library_path=None, voice=None):
                     return self.reply(503, b'Install Tesseract and qpdf on the computer running Hey GIG.')
                 except (subprocess.SubprocessError, OSError):
                     return self.reply(422, b'OCR could not finish. Try fewer pages or recapture the document.')
+                if frames.privacy() != privacy:
+                    return self.reply(423, b'Scan discarded after privacy changed.')
                 if library:
                     try:
                         library.add_document(pdf, len(pages))
@@ -135,6 +152,9 @@ def make_server(host, port, token, library_path=None, voice=None):
                 ocr_slot.release()
 
         def analyze_page(self):
+            privacy = frames.privacy()
+            if privacy['paused']:
+                return self.reply(423, b'Scanning paused by privacy control.')
             try:
                 size = int(self.headers.get('Content-Length', '0'))
                 if not 4 <= size <= MAX_FRAME:
@@ -157,6 +177,8 @@ def make_server(host, port, token, library_path=None, voice=None):
                 return self.reply(503, b'Automatic capture needs OpenCV on the Mac.')
             except (ValueError, subprocess.SubprocessError, OSError):
                 return self.reply(422, b'Page processing failed. Try recapturing the page.')
+            if frames.privacy() != privacy:
+                return self.reply(423, b'Scan discarded after privacy changed.')
             return self.reply(200, json.dumps(data).encode(), 'application/json')
 
         def json_reply(self, data):
@@ -224,14 +246,17 @@ def make_server(host, port, token, library_path=None, voice=None):
             if not voice_slot.acquire(blocking=False):
                 return self.reply(409, b'A voice request is already running.')
             try:
-                command = voice.listen()
-                if frames.paused:
+                privacy = frames.privacy()
+                if privacy['paused']:
+                    return self.reply(423, b'Microphone paused by privacy control.')
+                command = voice.listen(privacy['epoch'])
+                if frames.privacy() != privacy:
                     return self.reply(423, b'Voice stopped by privacy control.')
                 result = self.assistant_reply(command)
                 result['transcript'] = command
-                if not frames.paused:
+                if frames.privacy() == privacy:
                     try:
-                        voice.speak(result['answer'])
+                        voice.speak(result['answer'], privacy['epoch'])
                     except (ValueError, subprocess.SubprocessError, OSError):
                         result['audio_warning'] = 'The reply is available here. Galaxy Buds playback failed.'
                 return self.json_reply(result)
