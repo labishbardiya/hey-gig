@@ -114,16 +114,41 @@ button:not(:disabled):not(#connect):not(#export) { background: var(--veil); }
   body { background: var(--paper); }
   .scan-review { padding: 0; border: 0; background: none; box-shadow: none; }
 }
+
+[hidden] { display: none !important; }
+main { min-height: calc(100dvh - 40px); display: flex; flex-direction: column; }
+.app-nav { position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap;
+  gap: 4px; padding: 8px; margin-top: auto; background: var(--glass);
+  border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--glass-edge);
+  -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+.app-nav button { flex: 1 1 100px; min-height: 44px; }
+.app-nav button[aria-current="page"]:not(:disabled):not(#connect):not(#export) { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+main > .workspace, body.companion main > .workspace { grid-template-columns: minmax(0, 1fr); }
+.workspace ul { list-style: none; padding: 0; }
+.workspace li { border-top: 1px solid var(--line); padding: 12px 0; margin: 0; }
+.workspace li.date-heading { color: var(--accent); padding-top: 20px; }
+.workspace li time { display: block; color: var(--muted); font-size: 14px; }
+.workspace details { margin: 12px 0; }
+.workspace summary { cursor: pointer; color: var(--accent); padding: 8px 0; }
+.workspace form { margin: 8px 0; max-width: 480px; }
+.workspace select { min-height: 40px; max-width: 100%; }
+@media print { main { display: block; min-height: auto; } .app-nav { display: none; } }
 </style>
 <main>
 <header>
   <span class="brand">Hey GIG</span>
-  <label>Access token <input id="token" type="password" autocomplete="off"></label>
-  <button id="connect">Connect</button>
+  <details id="connection" open>
+    <summary>Connection</summary>
+    <div class="controls">
+      <label>Access token <input id="token" type="password" autocomplete="off"></label>
+      <button id="connect">Connect</button>
+    </div>
+  </details>
   <button id="stop" disabled>Stop preview</button>
   <button id="privacy" disabled>Pause camera capture</button>
 </header>
 <div class="intro"><h1>Document scanner</h1><p id="intro-copy">Capture pages and export one searchable PDF.</p></div>
+<div data-screen="scanner">
 <p id="status" role="status">Preview disconnected</p>
 <div class="scan-layout">
 <div class="views">
@@ -148,38 +173,81 @@ button:not(:disabled):not(#connect):not(#export) { background: var(--veil); }
 </details>
 </section>
 </div>
+</div>
 <p id="workspace-status" role="status"></p>
 <div class="workspace">
-  <section><h2>Library</h2><ul id="library"></ul></section>
-  <section><h2>Approvals</h2><ul id="approvals"></ul></section>
-  <section><h2>Activity</h2><ul id="activity"></ul></section>
+  <section data-screen="library"><h2>Library</h2><ul id="library"></ul></section>
+  <section data-screen="approvals"><h2>Approvals</h2><ul id="approvals"></ul></section>
+  <section data-screen="activity"><h2>Timeline</h2>
+    <label>Event type
+      <select id="activity-filter"><option value="all">All events</option><option value="documents">Documents</option>
+      <option value="shares">Sharing</option><option value="reminders">Reminders</option><option value="routines">Routines</option></select>
+    </label>
+    <ul id="activity"></ul>
+  </section>
 </div>
 <div class="workspace organize">
-  <section><h2>Reminders</h2>
+  <section data-screen="reminders"><h2>Schedule</h2>
+    <details><summary>New reminder</summary>
     <form id="reminder-form">
       <label>Reminder <input id="reminder-title" required maxlength="200"></label>
       <label>Due <input id="reminder-due" type="datetime-local" required></label>
       <button>Schedule</button>
     </form>
+    </details>
     <ul id="reminders"></ul>
   </section>
-  <section><h2>Routines</h2>
+  <section data-screen="routines"><h2>Saved routines</h2>
+    <details><summary>New routine</summary>
     <form id="routine-form">
       <label>Name <input id="routine-name" required maxlength="200"></label>
       <label>Action <select id="routine-action"><option value="privacy">Pause camera capture</option><option value="scan">Open scanner</option></select></label>
       <button>Save routine</button>
     </form>
+    </details>
     <ul id="routines"></ul>
   </section>
 </div>
+<nav class="app-nav" aria-label="Hey GIG screens" hidden>
+  <button type="button" data-view="scanner">Scanner</button>
+  <button type="button" data-view="activity">Activity</button>
+  <button type="button" data-view="reminders">Reminders</button>
+  <button type="button" data-view="routines">Routines</button>
+  <button type="button" data-view="library">Library</button>
+  <button type="button" data-view="approvals">Approvals</button>
+</nav>
 </main>
 <script>
 const byId = id => document.getElementById(id);
 const companion = new URLSearchParams(location.search).has('companion');
 if (companion) {
   document.body.classList.add('companion');
-  document.querySelector('h1').textContent = 'Companion';
+
 }
+const nav = document.querySelector('.app-nav');
+let activity = [];
+function showScreen(view, scroll = true) {
+  const selected = nav.querySelector(`[data-view="${view}"]`);
+  document.querySelector('h1').textContent = selected.textContent;
+  byId('intro-copy').hidden = view !== 'scanner';
+  for (const panel of document.querySelectorAll('[data-screen]')) {
+    panel.hidden = panel.dataset.screen !== view;
+  }
+  for (const layout of document.querySelectorAll('.workspace')) {
+    layout.hidden = !layout.querySelector('[data-screen]:not([hidden])');
+  }
+  for (const button of nav.querySelectorAll('button')) {
+    if (button === selected) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+  if (scroll) window.scrollTo(0, 0);
+}
+nav.hidden = false;
+for (const button of nav.querySelectorAll('button')) {
+  button.onclick = () => showScreen(button.dataset.view);
+}
+showScreen('scanner', false);
+
 const cameras = ['scene', 'reading'];
 let privacyPaused = false;
 let workspaceRefresh;
@@ -467,6 +535,32 @@ byId('privacy').onclick = async () => {
   }
 };
 
+function renderActivity() {
+  const filter = byId('activity-filter').value;
+  const prefixes = {
+    documents: /^Saved document /, shares: /^(Share request |Requested approval )/,
+    reminders: /^Reminder /, routines: /^(Routine saved|Ran routine)/
+  };
+  let day;
+  renderList('activity', activity.filter(entry => filter === 'all' || prefixes[filter].test(entry.message)),
+    (row, entry) => {
+      const date = new Date(entry.created.replace(' ', 'T') + 'Z');
+      const label = date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+      if (label !== day) {
+        day = label;
+        const heading = document.createElement('strong');
+        heading.textContent = label;
+        row.classList.add('date-heading');
+        row.append(heading, document.createElement('br'));
+      }
+      const time = document.createElement('time');
+      time.dateTime = date.toISOString();
+      time.textContent = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      row.append(time, document.createTextNode(entry.message));
+    }, 'No matching events.');
+}
+byId('activity-filter').onchange = renderActivity;
+
 async function refreshWorkspace() {
   try {
     const response = await workspaceRequest('/workspace');
@@ -489,9 +583,7 @@ async function refreshWorkspace() {
         const response = await workspaceRequest('/routines/run', { id: routine.id });
         const result = await response.json();
         if (result.action === 'scan') {
-          document.body.classList.remove('companion');
-          if (companion) location.search = '';
-          else byId('capture').scrollIntoView({ block: 'center' });
+          showScreen('scanner');
         }
         await refreshWorkspace();
       }));
@@ -522,9 +614,12 @@ async function refreshWorkspace() {
       }
     }, 'No share drafts yet.');
 
-    renderList('activity', state.activity, (row, entry) => {
-      row.textContent = `${entry.created} UTC · ${entry.message}`;
-    }, 'No activity yet.');
+    activity = state.activity;
+    renderActivity();
+    if (!byId('connection').dataset.connected) {
+      byId('connection').open = false;
+      byId('connection').dataset.connected = 'true';
+    }
     byId('workspace-status').textContent = '';
   } catch (error) {
     byId('workspace-status').textContent = error.message;
