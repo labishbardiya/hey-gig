@@ -35,7 +35,7 @@ Look for a final frame count of 30. This test discards the frames.
 
 ### 3. Open the USB feed on the Mac
 
-On the Pi, check the sender dependency with `/usr/bin/python3 -c 'import cv2'`. If the module is missing, install `python3-opencv` with apt on the Pi. In a fresh **Mac Terminal** window, change into this repository and run the following, substituting your current Pi SSH login:
+The USB sender uses the FFmpeg capture mode from step 2. In a fresh **Mac Terminal** window, change into this repository and run the following, substituting your current Pi SSH login:
 
 ```sh
 python3 -m gig.preview gig@PI_ADDRESS --camera usb
@@ -57,7 +57,7 @@ Expect a new JPEG with image dimensions. This step saves a test photo under /tmp
 
 ### 5. See both cameras together
 
-Check `/usr/bin/python3 -c 'from picamera2 import Picamera2'` on the Pi. If needed, install the Pi OS package `python3-picamera2`. Stop any previous preview, then run the Mac launcher with `--camera both`. Cover one lens at a time. Confirm that the USB camera changes **reading**, and the ribbon camera changes **scene**. Compare the reading image with the printed page at your intended working distance.
+The CSI sender uses `rpicam-vid` and FFmpeg. Stop any previous preview, then run the Mac launcher with `--camera both`. Cover one lens at a time. Confirm that the USB camera changes **reading**, and the ribbon camera changes **scene**. Compare the reading image with the printed page at your intended working distance.
 
 ### 6. Test the wearer’s earbuds
 

@@ -1,8 +1,48 @@
-"""One sender process per camera. Ctrl+C releases the camera."""
+"""Publish frames from the Pi's native capture tools to the Mac viewer."""
 import argparse
+from contextlib import ExitStack, contextmanager
 import os
-import time
+import subprocess
+import sys
 import urllib.request
+
+
+def jpeg_frames(stream):
+    """Read the length-delimited JPEG parts emitted by FFmpeg's mpjpeg muxer."""
+    for line in stream:
+        if line.strip() != b'--ffmpeg':
+            continue
+        headers = {}
+        for line in stream:
+            if not line.strip():
+                break
+            key, _, value = line.partition(b':')
+            headers[key.lower()] = value.strip()
+        if not headers:
+            return
+        size = int(headers.get(b'content-length', b'0'))
+        if not 4 <= size <= 2 * 1024 * 1024:
+            raise ValueError('Unexpected JPEG length in camera output')
+        frame = stream.read(size)
+        if len(frame) != size:
+            raise ValueError('Incomplete JPEG from camera')
+        yield frame
+
+
+@contextmanager
+def capture_process(command, stdin=subprocess.DEVNULL):
+    process = subprocess.Popen(command, stdin=stdin, stdout=subprocess.PIPE)
+    try:
+        yield process
+    finally:
+        process.stdout.close()
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 def main():
@@ -18,52 +58,39 @@ def main():
     token = os.environ.get('GIG_TOKEN', '')
     if len(token) < 24:
         parser.error('Set the same GIG_TOKEN as the receiver')
-    import cv2
-    camera = None
-    try:
+
+    with ExitStack() as stack:
+        ffmpeg = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin']
+        source = subprocess.DEVNULL
         if args.source == 'usb':
-            camera = cv2.VideoCapture(args.device, cv2.CAP_V4L2)
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            camera.set(cv2.CAP_PROP_FPS, 15)
-            if not camera.isOpened():
-                raise RuntimeError('USB camera could not be opened')
+            ffmpeg += ['-f', 'v4l2', '-framerate', '15', '-video_size', '640x480',
+                       '-i', args.device, '-vf', f'fps={args.fps}', '-c:v', 'mjpeg', '-q:v', '5']
         else:
-            from picamera2 import Picamera2
-            camera = Picamera2()
-            camera.configure(camera.create_video_configuration(main={'size': (640, 480), 'format': 'RGB888'}, controls={'FrameRate': 15}))
-            camera.start()
-        print('Capture active. Ctrl+C stops capture. No frames saved to disk.', flush=True)
-        while True:
-            start = time.monotonic()
-            if args.source == 'usb':
-                ok, frame = camera.read()
-                if not ok:
-                    raise RuntimeError('USB camera stopped delivering frames')
-            else:
-                frame = camera.capture_array()
-            ok, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-            if not ok:
-                raise RuntimeError('JPEG encoding failed')
-            request = urllib.request.Request(args.server.rstrip('/') + '/frame/' + args.name,
-                data=jpeg.tobytes(), headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'image/jpeg'}, method='POST')
-            try:
-                with urllib.request.urlopen(request, timeout=3) as response:
-                    response.read()
-            except OSError as error:
-                print(f'Receiver unavailable: {error}', flush=True)
-                time.sleep(1)
-            time.sleep(max(0, 1 / args.fps - (time.monotonic() - start)))
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if camera is not None:
-            if args.source == 'usb':
-                camera.release()
-            else:
-                camera.stop()
-                camera.close()
+            camera = stack.enter_context(capture_process([
+                'rpicam-vid', '--nopreview', '--timeout', '0', '--codec', 'mjpeg',
+                '--width', '640', '--height', '480', '--framerate', str(args.fps), '--flush', '-o', '-']))
+            source = camera.stdout
+            ffmpeg += ['-f', 'mjpeg', '-probesize', '32', '-analyzeduration', '0',
+                       '-i', 'pipe:0', '-c:v', 'copy']
+        ffmpeg += ['-f', 'mpjpeg', '-flush_packets', '1', 'pipe:1']
+        encoder = stack.enter_context(capture_process(ffmpeg, stdin=source))
+        endpoint = args.server.rstrip('/') + '/frame/' + args.name
+        headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'image/jpeg'}
+        first = True
+        for frame in jpeg_frames(encoder.stdout):
+            request = urllib.request.Request(endpoint, data=frame, headers=headers)
+            with urllib.request.urlopen(request, timeout=5) as response:
+                response.read()
+            if first:
+                print(f'First {args.name} frame reached the viewer.', flush=True)
+                first = False
+        raise RuntimeError(f'{args.name} camera stream ended')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    except (OSError, ValueError, RuntimeError) as error:
+        sys.exit(f'Camera sender: {error}')

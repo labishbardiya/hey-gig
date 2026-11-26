@@ -15,7 +15,7 @@ from gig.server import make_server
 # Executed with the Pi's system Python so apt-installed camera libraries are visible.
 # Keep stdin open as a session lease. SSH disconnection closes it on the Pi.
 REMOTE = """
-import json, os, select, subprocess, sys
+import json, os, select, signal, subprocess, sys
 
 payload = json.loads(sys.stdin.buffer.readline())
 env = dict(os.environ, GIG_TOKEN=payload['token'], PYTHONUNBUFFERED='1')
@@ -24,7 +24,7 @@ try:
     for args in payload['senders']:
         children.append(subprocess.Popen(
             [sys.executable, '-c', payload['code'], *args],
-            stdin=subprocess.DEVNULL, env=env))
+            stdin=subprocess.DEVNULL, env=env, start_new_session=True))
     while True:
         for child in children:
             if child.poll() is not None:
@@ -33,8 +33,10 @@ try:
             break
 finally:
     for child in children:
-        if child.poll() is None:
-            child.terminate()
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     for child in children:
         try:
             child.wait(timeout=2)
